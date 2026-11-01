@@ -40,24 +40,23 @@
   <article class="tool">
     {{ spool_graphic(spool) }}
     <div class="tool-body">
-      <h3>{{ spool.brand or 'Unknown brand' }} {{ spool.material_name or 'Unknown material' }}</h3>
+      <h3>{{ spool.display_name }}</h3>
       <dl>
         <div><dt>Tool</dt><dd>{{ spool.tool_id }}</dd></div>
         <div><dt>Actual weight</dt><dd>{{ spool.actual_weight|grams }}</dd></div>
         <div><dt>Consumed</dt><dd>{{ spool.consumed_weight|grams }}</dd></div>
         <div><dt>Empty spool</dt><dd>{{ spool.empty_weight|grams }}</dd></div>
-        <div><dt>Read from</dt><dd>{{ 'NFC tag' if spool.is_from_nfc else 'Manual selection' }}</dd></div>
+        <div><dt>Read from</dt><dd>{{ 'NFC tag' if spool.is_from_nfc else 'Not confirmed by Connect' }}</dd></div>
       </dl>
 
       {% if tool.url %}
       <p>Linked to <a href="{{ tool.url }}">spool {{ tool.spool_id }} in Spoolman</a>. <a href="{{ url_for('unlink_review', spool_id=tool.spool_id) }}">Unlink</a></p>
-      {% elif not spool.is_from_nfc %}
-      <p class="hint">This spool is not tracked, because it was not read from an NFC tag.</p>
       {% else %}
       <div class="unlinked">
         <p><strong>This spool is not linked to Spoolman.</strong> Consumption is not recorded until you confirm a choice.</p>
         {% set best = tool.candidates|selectattr('best')|first %}
-        {% set suggestions = tool.candidates|selectattr('suggested')|list %}
+        {% set suggestions = tool.candidates|selectattr('suggested')|list or tool.candidates|selectattr('score', 'gt', 0)|list %}
+        {% if not spool.is_from_nfc %}<p class="hint">Connect did not report this spool as read from an NFC tag, so choose its Spoolman spool yourself. If it gets a new ID when loaded again, you need to link it again.</p>{% endif %}
         <form method="get" action="{{ url_for('review_choice') }}" class="stack">
           <input type="hidden" name="uuid" value="{{ spool.uuid }}">
           <fieldset class="choices">
@@ -82,10 +81,12 @@
                 </select>
               </span>
             </label>
+            {% if spool.can_create %}
             <label class="choice{{ ' top' if not best }}">
               <input type="radio" name="choice" value="new" {{ 'checked' if not best }} required>
               <span><span class="choice-name">Create a new spool</span></span>
             </label>
+            {% endif %}
           </fieldset>
           <button>Review</button>
         </form>

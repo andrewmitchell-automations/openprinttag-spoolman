@@ -433,3 +433,42 @@ def test_recent_actions_show_their_text(respx_mock, tmp_path):
     page = signed_in(service).get("/").text
     assert "PATCH /spool/52" in page
     assert "Called" in page
+
+
+def custom_graphql(request):
+    body = json.loads(request.content)
+    if "BridgePrinter(" not in body["query"]:
+        return graphql(request)
+    data = printer(uuid="custom", from_nfc=False)
+    instance = data["fff"]["tools"][0]["materialPackageInstance"]
+    instance["actualNettoFullWeight"] = None
+    instance["package"]["container"] = None
+    instance["package"]["material"].update(name=None, brand=None, properties={"density": None}, type={"abbreviation": "PETG"})
+    return respx.MockResponse(json={"data": {"printer": {"printer": data}}})
+
+
+@respx.mock(assert_all_called=False)
+def test_a_custom_tag_spool_can_be_linked_but_not_created(respx_mock, tmp_path):
+    respx_mock.post(GRAPHQL).mock(side_effect=custom_graphql)
+    mock_fields(respx_mock)
+    petg = {"id": 55, "remaining_weight": 1000, "initial_weight": 1000, "used_weight": 0, "filament": {"id": 5, "name": "petg-gf", "material": "PETG", "color_hex": "000000", "weight": 1000, "vendor": {"name": "ELEGOO"}, "extra": {}}, "extra": {"card_uids": json.dumps("")}}
+    respx_mock.get(url__startswith=f"{SPOOLMAN}/api/v1/spool?").respond(json=[petg])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/55").respond(json=petg)
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/55").respond(json={})
+    service = configured(tmp_path, DRY_RUN="false")
+    assert service.poll_once() is True
+    client = signed_in(service)
+    page = client.get("/").text
+    assert "Unknown brand PETG" in page
+    assert "#55 ELEGOO petg-gf" in page
+    assert "Not confirmed by Connect" in page
+    assert 'value="new"' not in page
+    assert 'value="55" checked' not in page
+    assert client.get("/spool/review", query_string={"uuid": "custom", "choice": "new"}).status_code == 302
+    review = client.get("/spool/review", query_string={"uuid": "custom", "choice": "55"}).text
+    assert "Review before linking" in review
+    assert "Link the Unknown brand PETG" in review
+    assert "Linked to spool 55" in client.post("/spool/link", data={"uuid": "custom", "spool_id": "55"}).text
+    body = json.loads(patch.calls[0].request.content)
+    assert set(body) == {"extra"}
+    assert json.loads(body["extra"]["opt_instance_uuid"]) == "custom"

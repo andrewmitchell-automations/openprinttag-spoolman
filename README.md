@@ -92,7 +92,7 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 
 - **Whole grams:** Connect reports consumption in whole grams, so small uses can show up a little late.
 - **Token renewal can still fail:** if Prusa rejects it, the dashboard says so and you need to log in again.
-- **NFC only:** spools not read from an NFC tag are not tracked.
+- **Spools without a confirmed NFC reading:** Connect can report a spool, such as one with a custom tag, without marking it as read from NFC or including its name and brand. You can link it yourself, but it is never created automatically. Whether Connect keeps its ID and reports its consumption has not been verified.
 
 ## Screenshots
 

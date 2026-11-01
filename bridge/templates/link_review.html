@@ -2,7 +2,7 @@
 {% block title %}Review link{% endblock %}
 {% block main %}
 <h1>Review before linking</h1>
-<p class="lead">Link the {{ loaded.brand }} {{ loaded.material_name }} in tool {{ loaded.tool_id }} to Spoolman spool {{ spool.id }}. Nothing has been written yet.</p>
+<p class="lead">Link the {{ loaded.display_name }} in tool {{ loaded.tool_id }} to Spoolman spool {{ spool.id }}. Nothing has been written yet.</p>
 {% if shared %}<p class="notice error">This filament is used by {{ shared }} other spool{{ 's' if shared != 1 }}. Filament changes would affect them too, so they are off by default.</p>{% endif %}
 <form method="post" action="{{ url_for('link_spool') }}" class="stack wide">
   <input type="hidden" name="uuid" value="{{ loaded.uuid }}">

@@ -170,9 +170,12 @@ class Service:
             if entry["config"].location and all(tool["spool"].uuid != loaded.uuid for tool in entry.get("tools", []))
         )
 
+    def _loaded_now(self) -> set[str]:
+        return {tool["spool"].uuid for entry in self.status.values() for tool in entry.get("tools", [])}
+
     def link_candidates(self, loaded: LoadedSpool) -> list[dict]:
         with self.lock:
-            return rank_spools_for_link(loaded, self.spoolman.list_spools(), self._other_locations(loaded))
+            return rank_spools_for_link(loaded, self.spoolman.list_spools(), self._other_locations(loaded), self._loaded_now())
 
     def _loaded(self, uuid: str) -> tuple[LoadedSpool, str]:
         found = self.find_loaded(uuid)
@@ -205,7 +208,7 @@ class Service:
     def link(self, uuid: str, spool_id: int, selected: set[str]) -> list[str]:
         with self.lock:
             loaded, _ = self._loaded(uuid)
-            return self._capture(lambda: self.bridge.link_spool(loaded, spool_id, selected))
+            return self._capture(lambda: self.bridge.link_spool(loaded, spool_id, selected, self._loaded_now()))
 
     def unlink(self, spool_id: int) -> list[str]:
         with self.lock:
@@ -214,6 +217,8 @@ class Service:
     def create_review(self, uuid: str) -> dict:
         with self.lock:
             loaded, location = self._loaded(uuid)
+            if not loaded.can_create:
+                raise ValueError("Connect did not report enough about this spool to create it")
             return {"loaded": loaded, "location": location, "preview": self.bridge.create_preview(loaded)}
 
     def create(self, uuid: str, name: str, location: str) -> list[str]:

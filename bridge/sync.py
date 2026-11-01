@@ -39,6 +39,14 @@ class LoadedSpool:
     density: float | None
 
     @property
+    def display_name(self) -> str:
+        return f"{self.brand or 'Unknown brand'} {self.material_name or self.material_type or 'unknown material'}"
+
+    @property
+    def can_create(self) -> bool:
+        return all(v is not None for v in (self.brand, self.material_name, self.density, self.filament_diameter))
+
+    @property
     def remaining_fraction(self) -> float:
         full = self.nominal_weight or self.actual_weight or 0
         if not full or self.actual_weight is None:
@@ -186,12 +194,21 @@ def score_spool(loaded: LoadedSpool, spool: dict, other_locations: tuple[str, ..
     }
 
 
-def rank_spools_for_link(loaded: LoadedSpool, spools: list[dict], other_locations: tuple[str, ...] = ()) -> list[dict]:
+def can_replace_link(loaded: LoadedSpool, linked_to, loaded_now: set[str]) -> bool:
+    """A spool without an NFC reading can get a new ID each time it is loaded, so its old link may be stale."""
+    return bool(linked_to) and not loaded.is_from_nfc and linked_to not in loaded_now
+
+
+def rank_spools_for_link(
+    loaded: LoadedSpool, spools: list[dict], other_locations: tuple[str, ...] = (), loaded_now: set[str] | None = None
+) -> list[dict]:
     """Candidates for an unlinked spool, best first. Nothing is linked until the user confirms."""
+    loaded_now = loaded_now or set()
     ranked = [
         score_spool(loaded, spool, other_locations)
         for spool in spools
-        if not spool.get("archived") and not extra_value(spool, SPOOL_UUID_FIELD)
+        if not spool.get("archived")
+        and (not extra_value(spool, SPOOL_UUID_FIELD) or can_replace_link(loaded, extra_value(spool, SPOOL_UUID_FIELD), loaded_now))
     ]
     ranked.sort(key=lambda c: (-c["score"], c["id"]))
     for position, candidate in enumerate(ranked):
@@ -208,7 +225,8 @@ def _differs(before, after) -> bool:
 def build_link_changes(loaded: LoadedSpool, spool: dict, shared: int) -> list[dict]:
     """The rows on the review page. Filament changes are off if other spools share the filament."""
     filament = spool.get("filament") or {}
-    filament_on = shared == 0
+    # Without an NFC reading, Connect's material data may be generic, so it should not overwrite anything by default.
+    filament_on = shared == 0 and loaded.is_from_nfc
     rows = [
         ("spool_instance", "spool", SPOOL_UUID_FIELD, "Link to this tag", extra_value(spool, SPOOL_UUID_FIELD), loaded.uuid, True),
         ("spool_initial_weight", "spool", "initial_weight", "Spool: filament weight", spool.get("initial_weight"), loaded.actual_weight, True),
@@ -319,16 +337,13 @@ class Bridge:
             loaded.tool_id, loaded.brand, loaded.material_name, loaded.uuid,
             loaded.actual_weight, loaded.consumed_weight, loaded.is_from_nfc,
         )
-        if not loaded.is_from_nfc:
-            log.warning("Skipping instance %s because it was not read from an NFC tag", loaded.uuid)
-            return None
         if spool is None:
-            if self.auto_create:
+            if self.auto_create and loaded.is_from_nfc:
                 created = self.create_spool(loaded, location)
                 return created["id"] if created else None
             if loaded.uuid not in self._warned_unlinked:
                 self._warned_unlinked.add(loaded.uuid)
-                log.warning("Instance %s is not linked to a Spoolman spool; waiting for a choice", loaded.uuid)
+                log.warning("Instance %s is not linked to a Spoolman spool; waiting for a choice (NFC %s)", loaded.uuid, loaded.is_from_nfc)
             return None
         log.info("Instance %s is Spoolman spool %s", loaded.uuid, spool["id"])
         if spool.get("archived"):
@@ -356,12 +371,12 @@ class Bridge:
             return
         self.state.record(loaded.uuid, current, action)
 
-    def link_spool(self, loaded: LoadedSpool, spool_id: int, selected: set[str]) -> None:
+    def link_spool(self, loaded: LoadedSpool, spool_id: int, selected: set[str], loaded_now: set[str] | None = None) -> None:
         """Apply the review page's choices. Other extra fields, like card_uids, are kept."""
         self._ensure_extra_fields()
         spool = self.spoolman.get_spool(spool_id)
         taken = extra_value(spool, SPOOL_UUID_FIELD)
-        if taken and taken != loaded.uuid:
+        if taken and taken != loaded.uuid and not can_replace_link(loaded, taken, loaded_now or set()):
             raise SpoolmanError(f"Spool {spool_id} is already linked to instance {taken}")
         changes = {c["key"]: c for c in build_link_changes(loaded, spool, 0)}
         spool_extra = dict(spool.get("extra") or {})

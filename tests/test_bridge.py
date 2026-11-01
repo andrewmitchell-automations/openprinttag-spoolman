@@ -19,6 +19,7 @@ from bridge.sync import (
     index_spools,
     parse_loaded_spools,
     build_link_changes,
+    can_replace_link,
     rank_spools_for_link,
     score_spool,
 )
@@ -292,8 +293,41 @@ def test_missing_extra_fields_are_created(respx_mock, tmp_path):
     assert filament_field.called
 
 
+def custom_tag_printer(consumed=0):
+    data = printer(consumed=consumed, uuid="custom", from_nfc=False)
+    instance = data["fff"]["tools"][0]["materialPackageInstance"]
+    instance["actualNettoFullWeight"] = None
+    instance["package"]["container"] = None
+    material = instance["package"]["material"]
+    material.update(name=None, brand=None, properties={"density": None}, primaryColor={"colorRgba": "#101010"})
+    material["type"] = {"abbreviation": "PETG"}
+    return data
+
+
 @respx.mock(assert_all_called=False)
-def test_non_nfc_instance_is_skipped(respx_mock, tmp_path):
+def test_a_linked_spool_without_nfc_reading_is_still_tracked(respx_mock, tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({"consumed": {"custom": 3}}))
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[{"id": 55, "location": "Core One", "extra": {"opt_instance_uuid": json.dumps("custom")}}])
+    use = respx_mock.put(f"{SPOOLMAN}/api/v1/spool/55/use").respond(json={})
+    result = make_bridge(tmp_path, custom_tag_printer(consumed=8), auto_create=False).poll()
+    assert json.loads(use.calls[0].request.content) == {"use_weight": 5}
+    assert result["tools"][0]["spool_id"] == 55
+
+
+def test_a_custom_tag_spool_keeps_spoolmans_filament_by_default():
+    loaded = parse_loaded_spools(custom_tag_printer())[0]
+    assert loaded.can_create is False
+    assert loaded.display_name == "Unknown brand PETG"
+    spool = {"id": 55, "initial_weight": 1000, "spool_weight": None, "used_weight": 0, "filament": {"id": 5, "name": "petg-gf", "material": "PETG", "color_hex": "000000", "weight": 1000, "extra": {}}, "extra": {}}
+    changes = {c["key"]: c for c in build_link_changes(loaded, spool, 0)}
+    assert set(changes) == {"spool_instance", "filament_color_hex", "filament_material"}
+    assert changes["filament_color_hex"]["checked"] is False
+    assert changes["filament_material"]["checked"] is False
+
+
+@respx.mock(assert_all_called=False)
+def test_non_nfc_instance_is_never_created_automatically(respx_mock, tmp_path):
     mock_fields(respx_mock)
     respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[])
     make_bridge(tmp_path, printer(from_nfc=False)).poll()
@@ -624,3 +658,14 @@ def test_unlink_keeps_other_extras_and_notices_if_the_link_stays(respx_mock, tmp
     route.side_effect = [httpx.Response(200, json=linked), httpx.Response(200, json=linked)]
     with pytest.raises(Exception, match="kept the link"):
         bridge.unlink_spool(52)
+
+
+def test_a_stale_link_can_only_be_replaced_without_nfc():
+    custom = parse_loaded_spools(custom_tag_printer())[0]
+    tagged = loaded_spool()
+    assert can_replace_link(custom, "old-load", {"custom"}) is True
+    assert can_replace_link(custom, "on-another-printer", {"custom", "on-another-printer"}) is False
+    assert can_replace_link(tagged, "old-load", {UUID}) is False
+    linked = {**SPOOL_52, "extra": {"opt_instance_uuid": json.dumps("old-load")}}
+    assert [c["id"] for c in rank_spools_for_link(custom, [linked], loaded_now={"custom"})] == [52]
+    assert rank_spools_for_link(tagged, [linked], loaded_now={UUID}) == []

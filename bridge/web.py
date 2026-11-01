@@ -264,7 +264,7 @@ def create_app(service: Service) -> Flask:
                     view = dict(tool)
                     if tool["spool_id"]:
                         view["url"] = service.spoolman.spool_url(tool["spool_id"])
-                    elif tool["spool"].is_from_nfc:
+                    else:
                         try:
                             view["candidates"] = service.link_candidates(tool["spool"])
                         except Exception as e:
@@ -305,8 +305,8 @@ def create_app(service: Service) -> Flask:
             if choice == "new":
                 return render_template("create_review.html", **service.create_review(uuid))
             return render_template("link_review.html", **service.link_review(uuid, int(choice)))
-        except ValueError:
-            return failed("Could not open the review", "choose a spool that is still available")
+        except ValueError as e:
+            return failed("Could not open the review", e if choice == "new" else "choose a spool that is still available")
         except Exception as e:
             return failed("Could not open the review", e)
 
