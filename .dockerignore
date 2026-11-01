@@ -6,3 +6,4 @@ certs/
 research/
 tests/
 __pycache__/
+data-local/
