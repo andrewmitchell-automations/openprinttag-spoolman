@@ -4,8 +4,8 @@
 <h1>Log</h1>
 <p class="lead">The latest 200 lines, newest first.</p>
 {% if lines %}
-<pre class="log">{% for line in lines %}{{ line }}
-{% endfor %}</pre>
+<div class="card"><pre class="log">{% for line in lines %}{{ line }}
+{% endfor %}</pre></div>
 {% else %}
 <p>Nothing has been logged yet.</p>
 {% endif %}

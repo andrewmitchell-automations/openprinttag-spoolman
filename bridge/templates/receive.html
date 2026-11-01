@@ -3,6 +3,8 @@
 {% block head %}<script src="{{ url_for('static', filename='receive.js') }}" defer></script>{% endblock %}
 {% block main %}
 <h1>Prusa Connect login</h1>
+<div class="card panel">
 <p class="lead" id="status" role="status">Sending the login to the bridge...</p>
 <p id="done" hidden>Close this window without logging out, then reload the setup page.</p>
+</div>
 {% endblock %}

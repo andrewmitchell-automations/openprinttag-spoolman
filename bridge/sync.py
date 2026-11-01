@@ -38,6 +38,7 @@ class LoadedSpool:
     brand: str | None
     color_hex: str | None
     density: float | None
+    from_warehouse: bool = False
 
     @property
     def display_name(self) -> str:
@@ -51,6 +52,12 @@ class LoadedSpool:
     def full_weight(self) -> float | None:
         """A spool from the Warehouse has no measured weight, only the nominal one."""
         return self.actual_weight if self.actual_weight is not None else self.nominal_weight
+
+    @property
+    def remaining_weight(self) -> float | None:
+        if self.full_weight is None:
+            return None
+        return max(0.0, self.full_weight - (self.consumed_weight or 0))
 
     @property
     def remaining_fraction(self) -> float:
@@ -126,7 +133,8 @@ def fill_from_warehouse(loaded: LoadedSpool, item: dict) -> LoadedSpool:
         "color_hex": color_hex((material.get("primaryColor") or {}).get("colorRgba")),
         "density": (material.get("properties") or {}).get("density"),
     }
-    return replace(loaded, **{field: value for field, value in found.items() if getattr(loaded, field) is None})
+    missing = {field: value for field, value in found.items() if getattr(loaded, field) is None}
+    return replace(loaded, from_warehouse=True, **missing)
 
 
 def consumption_step(previous: float | None, current: float) -> tuple[str, float]:

@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>{% block title %}OpenPrintTag Spoolman for Prusa Connect{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
@@ -13,15 +14,17 @@
   <p class="test-band">Dry run: the bridge shows what it would do, but writes nothing to Spoolman.</p>
   {% endif %}
   <header class="top">
-    <a class="brand" href="{{ url_for('dashboard') }}">OpenPrintTag Spoolman for Prusa Connect</a>
-    {% if signed_in %}
-    <nav>
-      <a href="{{ url_for('dashboard') }}">Dashboard</a>
-      <a href="{{ url_for('logs') }}">Log</a>
-      <a href="{{ url_for('setup', step='spoolman') }}">Settings</a>
-      <form method="post" action="{{ url_for('logout') }}"><button class="link">Log out</button></form>
-    </nav>
-    {% endif %}
+    <div class="top-inner">
+      <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark" aria-hidden="true"></span>OpenPrintTag ↔ Spoolman</a>
+      {% if signed_in %}
+      <nav>
+        <a class="nav-link" href="{{ url_for('dashboard') }}" {{ 'aria-current=page' if request.endpoint == 'dashboard' }}>Dashboard</a>
+        <a class="nav-link" href="{{ url_for('logs') }}" {{ 'aria-current=page' if request.endpoint == 'logs' }}>Log</a>
+        <a class="nav-link" href="{{ url_for('setup', step='spoolman') }}" {{ 'aria-current=page' if request.endpoint == 'setup' }}>Settings</a>
+        <form method="post" action="{{ url_for('logout') }}"><button class="nav-link">Log out</button></form>
+      </nav>
+      {% endif %}
+    </div>
   </header>
   <main>
     {% for category, message in get_flashed_messages(with_categories=true) %}

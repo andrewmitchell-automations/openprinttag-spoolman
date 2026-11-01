@@ -12,6 +12,10 @@
 </svg>
 {% endmacro %}
 
+{% macro swatch(color) %}
+<svg class="swatch" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="{{ color or 'none' }}"></circle></svg>
+{% endmacro %}
+
 {% block main %}
 {% for problem in problems %}<p class="notice error">{{ problem }}</p>{% endfor %}
 
@@ -21,63 +25,71 @@
 <p class="notice error">There is no refresh token, so the bridge stops when the login expires in {{ token.expires|until }}. <a href="{{ url_for('setup', step='connect') }}">Log in again</a>.</p>
 {% endif %}
 
-<div class="heading-row">
+<div class="title-row">
   <h1>Printers</h1>
-  <form method="post" action="{{ url_for('poll_now') }}"><button class="quiet">Poll now</button></form>
+  <form method="post" action="{{ url_for('poll_now') }}"><button class="quiet">↻ Poll now</button></form>
 </div>
 
 {% for printer in printers %}
-<section class="printer">
-  <h2>{{ printer.name or printer.config.name or printer.config.uuid }}</h2>
-  <p class="meta">
-    {% if printer.state %}<span class="state state-{{ printer.state|lower }}">{{ printer.state|capitalize }}</span>{% endif %}
-    {% if printer.time %}Last read {{ printer.time|clock }}{% else %}Waiting for the first poll{% endif %}{% if printer.config.location %}, location {{ printer.config.location }}{% endif %}
-  </p>
+<section class="card printer">
+  <header class="card-head">
+    <h2>{{ printer.name or printer.config.name or printer.config.uuid }}</h2>
+    {% if printer.state %}<span class="pill state-{{ printer.state|lower }}">{{ printer.state|capitalize }}</span>{% endif %}
+    <p class="card-meta">{% if printer.time %}Read {{ (printer.time|clock)[:5] }}{% else %}Waiting for the first poll{% endif %}{% if printer.config.location %} · {{ printer.config.location }}{% endif %}</p>
+  </header>
   {% if printer.error %}<p class="notice error">{{ printer.error }}</p>{% endif %}
 
   {% for tool in printer.tools %}
   {% set spool = tool.spool %}
   <article class="tool">
-    {{ spool_graphic(spool) }}
-    <div class="tool-body">
-      <h3>{{ spool.display_name }}</h3>
-      <dl>
-        <div><dt>Tool</dt><dd>{{ spool.tool_id }}</dd></div>
-        {% if spool.actual_weight is none and spool.nominal_weight is not none %}
-        <div><dt>Nominal weight</dt><dd>{{ spool.nominal_weight|grams }}</dd></div>
-        {% else %}
-        <div><dt>Actual weight</dt><dd>{{ spool.actual_weight|grams }}</dd></div>
-        {% endif %}
-        <div><dt>Consumed</dt><dd>{{ spool.consumed_weight|grams }}</dd></div>
-        <div><dt>Empty spool</dt><dd>{{ spool.empty_weight|grams }}</dd></div>
-        <div><dt>Read from</dt><dd>{{ 'NFC tag' if spool.is_from_nfc else 'Not confirmed by Connect' }}</dd></div>
-      </dl>
+    <div class="tool-head">
+      {{ spool_graphic(spool) }}
+      <div class="tool-title">
+        <h3>{{ spool.display_name }}{% if spool.is_from_nfc %} <span class="badge">NFC</span>{% endif %}{% if spool.from_warehouse %} <span class="badge">Warehouse</span>{% endif %}</h3>
+        <p class="subline">{% if spool.material_type %}{{ spool.material_type }} · {% endif %}{% if spool.color_hex %}#{{ spool.color_hex }} · {% endif %}Tool {{ spool.tool_id }}</p>
+      </div>
+      <p class="remaining">
+        {% if spool.remaining_weight is none %}Weight unknown{% else %}<strong>{{ spool.remaining_weight|grams }}</strong> / {{ (spool.nominal_weight or spool.actual_weight)|grams }}{% if spool.actual_weight is none %} nominal{% endif %}{% endif %}
+      </p>
+    </div>
+    <svg class="bar" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label="{{ (spool.remaining_fraction * 100)|round|int }} percent left">
+      <rect class="bar-track" width="100" height="8"></rect>
+      <rect width="{{ (spool.remaining_fraction * 100)|round(1) }}" height="8" fill="#{{ spool.color_hex or '8A97A3' }}"></rect>
+    </svg>
+    <ul class="stats">
+      <li>Consumed {{ spool.consumed_weight|grams }}</li>
+      <li>Empty spool {{ spool.empty_weight|grams }}</li>
+      {% if spool.density is not none %}<li>Density {{ spool.density }} g/cm³</li>{% endif %}
+      {% if not spool.is_from_nfc %}<li>Read from: Not confirmed by Connect</li>{% endif %}
+    </ul>
 
       {% if tool.url %}
-      <p>Linked to <a href="{{ tool.url }}">spool {{ tool.spool_id }} in Spoolman</a>. <a href="{{ url_for('unlink_review', spool_id=tool.spool_id) }}">Unlink</a></p>
+      <div class="tool-foot">
+        <a class="linked" href="{{ tool.url }}">✓ Linked to spool #{{ tool.spool_id }}</a>
+        <a class="unlink" href="{{ url_for('unlink_review', spool_id=tool.spool_id) }}">Unlink</a>
+      </div>
       {% else %}
       <div class="unlinked">
-        <p><strong>This spool is not linked to Spoolman.</strong> Consumption is not recorded until you confirm a choice.</p>
         {% set best = tool.candidates|selectattr('best')|first %}
         {% set suggestions = tool.candidates|selectattr('suggested')|list or tool.candidates|selectattr('score', 'gt', 0)|list %}
-        {% if not spool.is_from_nfc %}<p class="hint">Connect did not report this spool as read from an NFC tag, so choose its Spoolman spool yourself. If it gets a new ID when loaded again, you need to link it again.</p>{% endif %}
-        <form method="get" action="{{ url_for('review_choice') }}" class="stack">
+        <form method="get" action="{{ url_for('review_choice') }}" class="stack wide">
           <input type="hidden" name="uuid" value="{{ spool.uuid }}">
           <fieldset class="choices">
-            <legend>What should this spool be?</legend>
+            <legend>Not linked yet. Pick the matching Spoolman spool:</legend>
             {% for c in suggestions[:5] %}
-            <label class="choice{{ ' top' if c.best }}">
+            <label class="choice">
               <input type="radio" name="choice" value="{{ c.id }}" {{ 'checked' if c.best }} required>
-              <span>
+              {{ swatch(c.color) }}
+              <span class="choice-body">
                 <span class="choice-name">{{ c.label }}</span>
-                <span class="confidence confidence-{{ c.confidence|lower }}">{{ c.confidence }} confidence</span>
-                <span class="hint reasons">{{ c.reasons|join(', ') }}</span>
+                <span class="hint">{{ c.reasons|join(', ') }}</span>
               </span>
+              <span class="confidence confidence-{{ c.confidence|lower }}">{{ 'High match' if c.confidence == 'High' else c.confidence }}</span>
             </label>
             {% endfor %}
             <label class="choice">
               <input type="radio" name="choice" value="other" required>
-              <span>
+              <span class="choice-body">
                 <span class="choice-name">Another spool</span>
                 <input type="search" data-spool-filter placeholder="Search by ID, name, brand or color" aria-label="Search for a spool" autocomplete="off" hidden>
                 <select name="other_spool" aria-label="Another spool">
@@ -87,26 +99,26 @@
               </span>
             </label>
             {% if spool.can_create %}
-            <label class="choice{{ ' top' if not best }}">
+            <label class="choice">
               <input type="radio" name="choice" value="new" {{ 'checked' if not best }} required>
-              <span><span class="choice-name">Create a new spool</span></span>
+              <span class="choice-body"><span class="choice-name">Create a new spool</span></span>
             </label>
             {% endif %}
           </fieldset>
-          <button>Review</button>
+          <button>Review →</button>
         </form>
-        <p class="hint">Nothing is written until you confirm on the next page.</p>
+        <p class="hint">Consumption is not recorded until you confirm a choice. Nothing is written until you confirm on the next page.</p>
+        {% if not spool.is_from_nfc %}<p class="hint">Connect did not report this spool as read from an NFC tag, so choose its Spoolman spool yourself. If it gets a new ID when loaded again, you need to link it again.</p>{% endif %}
       </div>
       {% endif %}
-    </div>
   </article>
   {% else %}
-  {% if printer.time %}<p>No spool is loaded.</p>{% endif %}
+  {% if printer.time %}<p class="empty">No spool is loaded.</p>{% endif %}
   {% endfor %}
 
   {% if printer.actions %}
   <details class="actions">
-    <summary>Recent actions</summary>
+    <summary>Recent actions ({{ printer.actions|length }})</summary>
     <ul>{% for action in printer.actions|reverse %}<li>{{ action.time|clock }} {{ 'Would call' if action.dry_run else 'Called' }} <code>{{ action.text }}</code></li>{% endfor %}</ul>
   </details>
   {% endif %}

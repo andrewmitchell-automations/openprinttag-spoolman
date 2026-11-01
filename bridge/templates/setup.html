@@ -10,6 +10,7 @@
 
 {% if step == 'spoolman' %}
 <h1>Connect to Spoolman</h1>
+<div class="card panel">
 <form method="post" enctype="multipart/form-data" class="stack">
   <label>Spoolman address
     <input name="spoolman_url" type="url" required placeholder="http://server:7912" value="{{ form.get('spoolman_url', settings.spoolman_url) }}">
@@ -28,9 +29,11 @@
     <button name="action" value="test" class="quiet">Test connection</button>
   </div>
 </form>
+</div>
 
 {% elif step == 'connect' %}
 <h1>Log in to Prusa Connect</h1>
+<div class="card panel">
 {% if token.logged_in %}
 <p class="notice {{ 'error' if token.error or not token.has_refresh else 'ok' }}">
   {% if token.email %}Logged in as {{ token.email }}. {% else %}A login is stored. {% endif %}
@@ -62,9 +65,11 @@
     <button>Log in</button>
   </form>
 </details>
+</div>
 
 {% elif step == 'printers' %}
 <h1>Choose printers</h1>
+<div class="card panel">
 {% if available %}
 <form method="post" class="stack">
   {% for printer in available %}
@@ -81,9 +86,11 @@
 {% else %}
 <p>No printers found. Check that you are <a href="{{ url_for('setup', step='connect') }}">logged in to Connect</a> with the right account.</p>
 {% endif %}
+</div>
 
 {% elif step == 'mode' %}
 <h1>Choose how the bridge runs</h1>
+<div class="card panel">
 <form method="post" class="stack">
   <label class="check"><input type="checkbox" name="dry_run" {{ 'checked' if settings.dry_run }}> Dry run</label>
   <p class="hint">In a dry run the bridge reads everything and shows what it would do, but writes nothing to Spoolman. It remembers the consumption from the first poll, so when you turn dry run off, what was used in the meantime is deducted from linked spools too.</p>
@@ -94,5 +101,6 @@
   </label>
   <button>Save</button>
 </form>
+</div>
 {% endif %}
 {% endblock %}

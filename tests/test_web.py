@@ -239,9 +239,9 @@ def unlinked_service(respx_mock, tmp_path, spools=None, **env):
 @respx.mock(assert_all_called=False)
 def test_dashboard_preselects_the_best_match_and_writes_nothing(respx_mock, tmp_path):
     page = signed_in(unlinked_service(respx_mock, tmp_path, DRY_RUN="false")).get("/").text
-    assert "not linked to Spoolman" in page
+    assert "Not linked yet" in page
     assert "#52 Prusament Blend Jet Black" in page
-    assert "High confidence" in page
+    assert "High match" in page
     assert "Same brand" in page
     assert 'value="52" checked' in page
     assert spoolman_writes(respx_mock) == []
@@ -460,7 +460,7 @@ def test_a_custom_tag_spool_can_be_linked_but_not_created(respx_mock, tmp_path):
     client = signed_in(service)
     page = client.get("/").text
     assert "Unknown brand PETG" in page
-    assert "Nominal weight" in page
+    assert "1000 g nominal" in page
     assert "#55 ELEGOO petg-gf" in page
     assert "Not confirmed by Connect" in page
     assert 'value="new"' not in page

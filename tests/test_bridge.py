@@ -824,3 +824,14 @@ def test_warehouse_items_follows_every_page(respx_mock, tmp_path):
     items = ConnectClient(s, store, httpx.Client()).warehouse_items("org-1")
     assert [item["name"] for item in items] == ["A", "B"]
     assert json.loads(route.calls[1].request.content)["variables"]["after"] == "next"
+
+
+def test_remaining_weight_uses_the_measured_weight_when_it_is_known():
+    assert parse_loaded_spools(printer(consumed=59))[0].remaining_weight == 900
+    assert parse_loaded_spools(warehouse_spool_printer())[0].remaining_weight == 994
+
+
+def test_only_a_spool_that_used_the_warehouse_is_marked_as_a_warehouse_spool():
+    loaded = parse_loaded_spools(warehouse_spool_printer())[0]
+    assert loaded.from_warehouse is False
+    assert fill_from_warehouse(loaded, WAREHOUSE_ITEM).from_warehouse is True

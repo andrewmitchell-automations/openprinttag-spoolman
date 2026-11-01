@@ -3,9 +3,11 @@
 {% block main %}
 <h1>Unlink spool {{ spool_id }}?</h1>
 <p class="lead">This removes the link in Spoolman. The spool, its weights and its history stay. Consumption is not recorded until you link it again.</p>
+<div class="card panel">
 <form method="post" action="{{ url_for('unlink_spool') }}" class="buttons">
   <input type="hidden" name="spool_id" value="{{ spool_id }}">
   <button>Unlink spool</button>
   <a class="button quiet" href="{{ url_for('dashboard') }}">Back</a>
 </form>
+</div>
 {% endblock %}
