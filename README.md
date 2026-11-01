@@ -89,8 +89,8 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 
 ## Limitations
 
-- **Consumption is not fully verified:** Connect has been seen updating `consumedWeight` during a print, but the totals have not been checked against a finished print.
-- **Token renewal is not verified against Prusa:** it follows the web app's code. If renewal is rejected, the dashboard says so and you need to log in again.
+- **Whole grams:** Connect reports consumption in whole grams, so small uses can show up a little late.
+- **Token renewal can still fail:** if Prusa rejects it, the dashboard says so and you need to log in again.
 - **NFC only:** spools not read from an NFC tag are not tracked.
 
 ## Screenshots
