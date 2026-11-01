@@ -1,5 +1,7 @@
+import base64
 import json
 import os
+import re
 import stat
 import time
 
@@ -9,7 +11,7 @@ import respx
 from bridge.config import read_config
 from bridge.connect import Tokens
 from bridge.service import Service
-from bridge.web import create_app
+from bridge.web import LoginNonces, bookmarklet, create_app
 from tests.test_bridge import GRAPHQL, SPOOLMAN, UUID, make_jwt, mock_fields, printer
 
 PASSWORD = "correct-password"
@@ -334,3 +336,100 @@ def test_two_printers_are_both_polled(respx_mock, tmp_path):
     assert set(service.status) == {"a", "c"}
 
 
+
+
+def received(access, refresh, nonce):
+    raw = json.dumps({"access": access, "refresh": refresh, "nonce": nonce}).encode()
+    return {"login": base64.urlsafe_b64encode(raw).rstrip(b"=").decode()}
+
+
+def issued_nonce(client):
+    page = client.get("/setup/connect").text
+    return re.search(r"nonce:&#39;([^&]+)&#39;", page).group(1)
+
+
+def test_nonces_work_once_and_expire(monkeypatch):
+    nonces = LoginNonces(lifetime=100)
+    first = nonces.issue()
+    assert nonces.consume(first) is True
+    assert nonces.consume(first) is False
+    assert nonces.consume("made-up") is False
+    assert nonces.consume(None) is False
+    second = nonces.issue()
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now + 101)
+    assert nonces.consume(second) is False
+
+
+def test_bookmarklet_only_goes_to_the_bridge_and_uses_the_fragment():
+    code = bookmarklet("http://bridge:7913/setup/connect/receive", "abc")
+    assert code.startswith("javascript:")
+    assert "location.href='http://bridge:7913/setup/connect/receive#'+d" in code
+    assert "connect.prusa3d.com" in code and "nonce:'abc'" in code
+    assert "fetch" not in code
+
+
+@respx.mock(assert_all_called=False)
+def test_received_login_works_without_a_session_and_only_once(respx_mock, tmp_path):
+    respx_mock.post(GRAPHQL).mock(side_effect=graphql)
+    service = make_service(tmp_path, SPOOLMAN_URL=SPOOLMAN)
+    admin = signed_in(service)
+    nonce = issued_nonce(admin)
+    window = admin.application.test_client()
+    assert "Sending the login" in window.get("/setup/connect/receive").text
+    access = make_jwt(time.time() + 3600)
+    response = window.post("/setup/connect/receive", json=received(access, "secret-refresh", nonce))
+    assert response.status_code == 200
+    assert response.json["ok"] is True
+    assert "a@example.com" in response.json["message"]
+    assert "secret-refresh" not in response.text
+    assert service.store.load() == Tokens(access, "secret-refresh")
+    again = window.post("/setup/connect/receive", json=received(make_jwt(time.time() + 3600), "other", nonce))
+    assert again.status_code == 403
+    assert service.store.load() == Tokens(access, "secret-refresh")
+
+
+@pytest.mark.parametrize("body", [{"login": "not base64!"}, {"login": 5}, {}])
+def test_bad_received_logins_are_refused(tmp_path, body):
+    service = make_service(tmp_path, SPOOLMAN_URL=SPOOLMAN)
+    signed_in(service)
+    assert make_client(service).post("/setup/connect/receive", json=body).status_code == 403
+    assert not service.store.exists()
+
+
+def test_received_login_with_an_unknown_nonce_is_refused(tmp_path):
+    service = make_service(tmp_path, SPOOLMAN_URL=SPOOLMAN)
+    signed_in(service)
+    response = make_client(service).post("/setup/connect/receive", json=received(make_jwt(time.time() + 3600), "r", "made-up"))
+    assert response.status_code == 403
+    assert not service.store.exists()
+
+
+@respx.mock(assert_all_called=False)
+def test_received_login_with_no_token_is_refused(respx_mock, tmp_path):
+    service = make_service(tmp_path, SPOOLMAN_URL=SPOOLMAN)
+    admin = signed_in(service)
+    nonce = issued_nonce(admin)
+    assert admin.application.test_client().post("/setup/connect/receive", json=received(None, None, nonce)).status_code == 400
+    assert not service.store.exists()
+
+
+def test_received_login_from_another_site_is_blocked(tmp_path):
+    service = make_service(tmp_path, SPOOLMAN_URL=SPOOLMAN)
+    client = signed_in(service)
+    nonce = issued_nonce(client)
+    response = client.post("/setup/connect/receive", json=received("a", "r", nonce), headers={"Origin": "https://evil.example"})
+    assert response.status_code == 403
+
+
+@respx.mock(assert_all_called=False)
+def test_recent_actions_show_their_text(respx_mock, tmp_path):
+    respx_mock.post(GRAPHQL).mock(side_effect=graphql)
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[{"id": 52, "location": "Shelf", "extra": {"opt_instance_uuid": json.dumps(UUID)}}])
+    respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/52").respond(json={})
+    service = configured(tmp_path, DRY_RUN="false", LOCATION_NAME="Core One")
+    assert service.poll_once() is True
+    page = signed_in(service).get("/").text
+    assert "PATCH /spool/52" in page
+    assert "Called" in page

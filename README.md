@@ -37,7 +37,7 @@ Open `http://your-server:7913` and follow the steps:
 
 1. **Password:** choose an admin password. Do this right away, because whoever opens the page first sets it.
 2. **Spoolman:** enter the address and test the connection. If you use HTTPS with your own CA, upload the root certificate here.
-3. **Prusa Connect:** log in using a private window, run the line the page shows in the browser console, and paste the result. Prusa has no login for tools like this, so you copy it from your browser once. The bridge renews it after that.
+3. **Prusa Connect:** drag the button to your bookmarks bar, log in on connect.prusa3d.com in a private window, and click the bookmark. Prusa has no login for tools like this, so the bookmark copies it from your browser once. The bridge renews it after that. You can paste the login by hand instead.
 4. **Printers:** choose your printers and the location each one gets in Spoolman.
 5. **Operation:** choose dry run, whether new spools are created automatically, and how often to poll.
 
@@ -84,6 +84,7 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 
 - **Your Prusa account:** `data/` holds a login that gives access to your Prusa Connect account. Files with secrets have mode `600` and are never shown in the browser. Keep the folder private.
 - **Plain HTTP:** the password and login travel unencrypted over your network. Use the bridge only on a network you trust, or put it behind a reverse proxy with HTTPS. Do not expose it to the internet.
+- **Login bookmark:** it holds a one-time code that expires after 15 minutes. It sends your login to the bridge in the URL fragment, which stays out of server logs.
 - **First visitor:** whoever opens the page first chooses the password.
 - **Forgotten password:** stop the bridge, delete `data/auth.json` and start it again.
 

@@ -38,24 +38,30 @@
 </p>
 <p><a href="{{ url_for('setup', step='printers') }}">Continue</a> or log in again below.</p>
 {% endif %}
-<p class="lead">Prusa has no login for tools like this, so you copy it from your browser once.</p>
+<p class="lead">Prusa has no login for tools like this, so a bookmark copies the login from your browser once.</p>
 <ol class="instructions">
-  <li>Open a <strong>private window</strong> and log in to <a href="https://connect.prusa3d.com" target="_blank" rel="noopener">connect.prusa3d.com</a>. A separate window gives the bridge its own session, so you are not logged out elsewhere.</li>
-  <li>Press F12, open the console and run this line. If the console warns about pasting, first type what it asks for.
-    <div class="copy">
-      <code id="console-line">{{ console_line }}</code>
-      <button type="button" class="quiet" data-copy="console-line">Copy</button>
-    </div>
+  <li>Drag this button to your bookmarks bar:
+    <p><a class="button bookmarklet" href="{{ bookmarklet }}" draggable="true">Send Prusa login to bridge</a></p>
   </li>
-  <li>Paste the result below. It is never shown again.</li>
-  <li>Close the private window without logging out.</li>
+  <li>Open a <strong>private window</strong> and log in to <a href="https://connect.prusa3d.com" target="_blank" rel="noopener">connect.prusa3d.com</a>. A separate window gives the bridge its own session, so you are not logged out elsewhere.</li>
+  <li>Click the bookmark on the Connect page. It sends the login to this bridge.</li>
+  <li>Close the private window without logging out, then reload this page.</li>
 </ol>
-<form method="post" class="stack" autocomplete="off">
-  <label>Login from the console
-    <input name="login" type="password" required autocomplete="off" spellcheck="false">
-  </label>
-  <button>Log in</button>
-</form>
+<p class="hint">The bookmark works once, within 15 minutes. To log in again, reload this page and drag the new button.</p>
+<details class="manual-login">
+  <summary>Paste the login instead</summary>
+  <p class="hint">Use this if the bookmark does not work. On the Connect page, press F12, open the console and run this line. If the console warns about pasting, first type what it asks for.</p>
+  <div class="copy">
+    <code id="console-line">{{ console_line }}</code>
+    <button type="button" class="quiet" data-copy="console-line">Copy</button>
+  </div>
+  <form method="post" class="stack" autocomplete="off">
+    <label>Login from the console
+      <input name="login" type="password" required autocomplete="off" spellcheck="false">
+    </label>
+    <button>Log in</button>
+  </form>
+</details>
 
 {% elif step == 'printers' %}
 <h1>Choose printers</h1>

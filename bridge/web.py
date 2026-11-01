@@ -1,9 +1,11 @@
 """The web interface: a setup wizard and a dashboard, behind one admin password."""
 
+import base64
 import json
 import logging
 import os
 import secrets
+import threading
 import time
 from dataclasses import replace
 from datetime import datetime
@@ -24,10 +26,58 @@ log = logging.getLogger(__name__)
 STEPS = ("spoolman", "connect", "printers", "mode")
 MIN_PASSWORD_LENGTH = 8
 CA_FILENAME = "spoolman-ca.crt"
+NONCE_LIFETIME_SECONDS = 15 * 60
 CONSOLE_LINE = (
     "copy(JSON.stringify({access: localStorage.getItem('auth.access_token'), "
     "refresh: localStorage.getItem('auth.refresh_token')}))"
 )
+
+
+class LoginNonces:
+    """One-time codes that let the bookmarklet's window deliver a login without an admin session."""
+
+    def __init__(self, lifetime: int = NONCE_LIFETIME_SECONDS):
+        self.lifetime = lifetime
+        self.lock = threading.Lock()
+        self.expiries: dict[str, float] = {}
+
+    def issue(self) -> str:
+        nonce = secrets.token_urlsafe(24)
+        now = time.time()
+        with self.lock:
+            self.expiries = {n: e for n, e in self.expiries.items() if e > now}
+            self.expiries[nonce] = now + self.lifetime
+        return nonce
+
+    def consume(self, nonce) -> bool:
+        with self.lock:
+            expiry = self.expiries.pop(nonce, 0) if isinstance(nonce, str) else 0
+        return expiry > time.time()
+
+
+def bookmarklet(receive_url: str, nonce: str) -> str:
+    """Reads the login on connect.prusa3d.com and navigates to the bridge with it in the fragment.
+
+    It navigates instead of using fetch, because an HTTPS page may not call a plain HTTP bridge.
+    """
+    return (
+        "javascript:(function(){"
+        "var a=localStorage.getItem('auth.access_token'),r=localStorage.getItem('auth.refresh_token');"
+        "if(location.hostname!=='connect.prusa3d.com'||!a){alert('Log in on connect.prusa3d.com first, then click this bookmark there.');return;}"
+        f"var d=btoa(JSON.stringify({{access:a,refresh:r,nonce:'{nonce}'}}))"
+        ".replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');"
+        f"location.href='{receive_url}#'+d;"
+        "})();"
+    )
+
+
+def decode_received_login(raw) -> dict | None:
+    try:
+        padded = raw + "=" * (-len(raw) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded))
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 class AuthStore:
@@ -84,6 +134,7 @@ def next_step(service: Service) -> str | None:
 def create_app(service: Service) -> Flask:
     app = Flask(__name__)
     auth = AuthStore(service.settings.data_dir / "auth.json")
+    nonces = LoginNonces()
     app.secret_key = auth.secret_key()
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
@@ -119,7 +170,7 @@ def create_app(service: Service) -> Flask:
             origin = request.headers.get("Origin")
             if origin and urlparse(origin).netloc != request.host:
                 return "Blocked: the request came from another site", 403
-        if request.endpoint in ("healthz", "static", "login", "first_password"):
+        if request.endpoint in ("healthz", "static", "login", "first_password", "receive_login", "receive_login_post"):
             return None
         if not auth.has_password():
             return redirect(url_for("first_password"))
@@ -134,6 +185,28 @@ def create_app(service: Service) -> Flask:
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
         return response
+
+    @app.get("/setup/connect/receive")
+    def receive_login():
+        return render_template("receive.html")
+
+    @app.post("/setup/connect/receive")
+    def receive_login_post():
+        """The private window has no admin session, so the one-time code is what authorizes this."""
+        data = decode_received_login((request.get_json(silent=True) or {}).get("login"))
+        if not data or not nonces.consume(data.get("nonce")):
+            return jsonify(ok=False, message="This login link has expired or was already used. Reload the setup page and drag the new link to your bookmarks."), 403
+        parsed = parse_login_json(json.dumps({"access": data.get("access"), "refresh": data.get("refresh")}))
+        if not parsed:
+            return jsonify(ok=False, message="No Prusa Connect login was found. Log in on connect.prusa3d.com first."), 400
+        try:
+            me = service.log_in_to_connect(*parsed)
+        except Exception as e:
+            log.warning("A login from the bookmark was not accepted: %s", e)
+            return jsonify(ok=False, message=f"Connect rejected the login: {e}"), 400
+        if not parsed[1]:
+            return jsonify(ok=True, message=f"Logged in as {me.get('email')}, but there is no refresh token, so the bridge stops when the login expires.")
+        return jsonify(ok=True, message=f"Logged in as {me.get('email')}.")
 
     @app.get("/healthz")
     def healthz():
@@ -302,6 +375,7 @@ def create_app(service: Service) -> Flask:
         if step == "connect":
             context["token"] = service.token_status()
             context["console_line"] = CONSOLE_LINE
+            context["bookmarklet"] = bookmarklet(url_for("receive_login", _external=True), nonces.issue())
         return render_template("setup.html", step=step, steps=STEPS, form=request.form, **context)
 
     def _post_spoolman():
