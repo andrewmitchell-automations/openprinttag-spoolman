@@ -156,6 +156,7 @@ dd { margin: 0; font-size: 1.125rem; font-variant-numeric: tabular-nums; }
 .stack.wide, table.wide { max-width: 48rem; }
 table.wide { margin-bottom: 1.5rem; }
 a.button { display: inline-block; padding: 0.55rem 1.1rem; border: 1px solid var(--accent); border-radius: 3px; color: var(--accent); font-weight: 600; text-decoration: none; }
+.change-note { display: block; margin-top: 0.25rem; }
 .calls { padding-left: 1.25rem; }
 
 .actions { margin-top: 1rem; }

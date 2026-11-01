@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 SPOOL_UUID_FIELD = "opt_instance_uuid"
 FILAMENT_UUID_FIELD = "opt_material_uuid"
 WEIGHT_EPSILON = 0.001
+USED_WEIGHT_TOLERANCE = 1
 HIGH_CONFIDENCE = 70
 SUGGESTION_THRESHOLD = 45
 
@@ -219,12 +220,19 @@ def build_link_changes(loaded: LoadedSpool, spool: dict, shared: int) -> list[di
         ("filament_spool_weight", "filament", "spool_weight", "Filament: empty weight", filament.get("spool_weight"), loaded.empty_weight, filament_on),
         ("filament_material", "filament", FILAMENT_UUID_FIELD, "Filament: OpenPrintTag material", extra_value(filament, FILAMENT_UUID_FIELD), loaded.material_uuid, filament_on),
     ]
+    used = spool.get("used_weight")
+    consumed = loaded.consumed_weight
+    more_used_elsewhere = used is not None and consumed is not None and used > consumed + USED_WEIGHT_TOLERANCE
     changes = []
     for key, target, field, label, before, after, checked in rows:
         if after is None or not _differs(before, after):
             continue
+        note = None
+        if key == "spool_used_weight" and more_used_elsewhere:
+            checked = False
+            note = f"Spoolman has recorded more usage ({round(used)} g) than the tag ({round(consumed)} g). It was likely used on another printer, so Spoolman's value is kept by default."
         changes.append(
-            {"key": key, "target": target, "field": field, "label": label, "before": before, "after": after, "checked": checked, "locked": key == "spool_instance"}
+            {"key": key, "target": target, "field": field, "label": label, "before": before, "after": after, "checked": checked, "locked": key == "spool_instance", "note": note}
         )
     return changes
 

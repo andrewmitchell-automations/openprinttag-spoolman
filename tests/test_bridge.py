@@ -556,6 +556,18 @@ def test_changes_show_before_and_after():
     assert "filament_weight" not in changes
 
 
+@pytest.mark.parametrize(
+    "used,checked,noted",
+    [(120.0, False, True), (31.5, False, True), (31.0, True, False), (0.0, True, False)],
+)
+def test_more_usage_in_spoolman_keeps_its_value_by_default(used, checked, noted):
+    changes = {c["key"]: c for c in build_link_changes(loaded_spool(30), {**SPOOL_52, "used_weight": used}, 0)}
+    row = changes["spool_used_weight"]
+    assert row["checked"] is checked
+    assert bool(row["note"]) is noted
+    assert changes["spool_initial_weight"]["checked"] is True
+
+
 def test_filament_changes_are_off_when_the_filament_is_shared():
     changes = build_link_changes(loaded_spool(), SPOOL_52, 2)
     assert all(c["checked"] is False for c in changes if c["target"] == "filament")

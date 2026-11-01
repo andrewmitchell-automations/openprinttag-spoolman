@@ -13,7 +13,7 @@
       {% for change in changes %}
       <tr>
         <td>{% if change.locked %}<span class="hint">Always</span>{% else %}<input type="checkbox" name="apply" value="{{ change.key }}" aria-label="Apply {{ change.label }}" {{ 'checked' if change.checked }}>{% endif %}</td>
-        <th scope="row">{{ change.label }}</th>
+        <th scope="row">{{ change.label }}{% if change.note %}<span class="hint change-note">{{ change.note }}</span>{% endif %}</th>
         <td>{{ change.before if change.before is not none else 'Not set' }}</td>
         <td>{{ change.after }}</td>
       </tr>

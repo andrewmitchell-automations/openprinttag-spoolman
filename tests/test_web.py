@@ -264,6 +264,15 @@ def test_review_shows_the_diff_and_writes_nothing(respx_mock, tmp_path):
 
 
 @respx.mock(assert_all_called=False)
+def test_review_explains_when_spoolman_has_more_usage(respx_mock, tmp_path):
+    used_elsewhere = {**SPOOL, "used_weight": 120}
+    client = signed_in(unlinked_service(respx_mock, tmp_path, spools=[used_elsewhere]))
+    page = client.get("/spool/review", query_string={"uuid": UUID, "choice": "52"}).text
+    assert "Spoolman has recorded more usage (120 g) than the tag (0 g)" in page
+    assert 'value="spool_used_weight" aria-label="Apply Spool: consumed" >' in page
+
+
+@respx.mock(assert_all_called=False)
 def test_review_warns_about_a_shared_filament(respx_mock, tmp_path):
     other = {**SPOOL, "id": 60, "extra": {}}
     client = signed_in(unlinked_service(respx_mock, tmp_path, spools=[SPOOL, other]))

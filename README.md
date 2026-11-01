@@ -47,7 +47,7 @@ Watch your first print in dry-run mode, then turn dry run off in the settings on
 
 If the bridge does not know a loaded spool, it checks Spoolman and suggests the most likely matches by brand, material, name, color, weight and OpenPrintTag material. Each suggestion shows a confidence level and the reasons. If nothing looks likely, it suggests creating a new spool.
 
-Nothing is written until you confirm. The review page shows each change before and after, and you choose which ones to apply. Filament changes are off by default if other spools share the filament. Other extra fields are kept.
+Nothing is written until you confirm. The review page shows each change before and after, and you choose which ones to apply. Filament changes are off by default if other spools share the filament. If Spoolman has recorded more usage than the tag, for example from another printer, its value is kept by default. Other extra fields are kept.
 
 In a dry run you can go through the same steps, and confirming shows the exact API calls without making them. Linked spools can be unlinked from the dashboard.
 
