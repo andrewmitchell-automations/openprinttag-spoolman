@@ -54,6 +54,7 @@ class SpoolmanClient:
         self.http = http or httpx.Client(timeout=30, verify=tls_verify(settings))
         self.actions: deque[dict] = deque(maxlen=50)
         self._announced: set[str] = set()
+        self.captured: list[str] = []
 
     def _request(self, method: str, path: str, body: dict | None = None):
         try:
@@ -74,6 +75,7 @@ class SpoolmanClient:
         """Returns the response, or None in dry-run mode."""
         rendered = json.dumps(body, ensure_ascii=False)
         line = f"{method} {path} {rendered}"
+        self.captured.append(line)
         if self.dry_run:
             # A dry run repeats the same intent every poll; once in the log is enough.
             if line not in self._announced:
@@ -121,6 +123,9 @@ class SpoolmanClient:
 
     def update_spool(self, spool_id: int, body: dict) -> None:
         self._write("PATCH", f"/spool/{spool_id}", body)
+
+    def update_filament(self, filament_id: int, body: dict) -> None:
+        self._write("PATCH", f"/filament/{filament_id}", body)
 
     def use_spool(self, spool_id: int, weight: float) -> None:
         self._write("PUT", f"/spool/{spool_id}/use", {"use_weight": weight})

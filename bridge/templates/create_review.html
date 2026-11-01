@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Review new spool{% endblock %}
+{% block main %}
+<h1>Review the new spool</h1>
+<p class="lead">Create a Spoolman spool for the {{ loaded.brand }} {{ loaded.material_name }} in tool {{ loaded.tool_id }}. Nothing has been written yet.</p>
+<table class="compare wide">
+  <tbody>
+    <tr><th scope="row">Vendor</th><td>{{ loaded.brand }}</td><td>{{ 'Uses the existing vendor' if preview.vendor_exists else 'Creates a new vendor' }}</td></tr>
+    <tr><th scope="row">Filament</th><td>{{ loaded.material_type }}, {{ loaded.nominal_weight|grams }}, #{{ loaded.color_hex }}</td><td>{{ 'Uses the existing filament' if preview.filament_exists else 'Creates a new filament' }}</td></tr>
+    <tr><th scope="row">Spool</th><td>{{ loaded.actual_weight|grams }} filament, {{ loaded.empty_weight|grams }} empty, {{ loaded.consumed_weight|grams }} consumed</td><td>Creates a new spool</td></tr>
+  </tbody>
+</table>
+<form method="post" action="{{ url_for('create_spool') }}" class="stack">
+  <input type="hidden" name="uuid" value="{{ loaded.uuid }}">
+  <label>Filament name <input name="name" required maxlength="64" value="{{ loaded.material_name }}"></label>
+  <label>Location <input name="location" maxlength="64" value="{{ location }}"></label>
+  {% if settings.dry_run %}<p class="hint">Dry run is on, so confirming shows the calls without making them.</p>{% endif %}
+  <div class="buttons">
+    <button>Confirm and create</button>
+    <a class="button quiet" href="{{ url_for('dashboard') }}">Back</a>
+  </div>
+</form>
+{% endblock %}

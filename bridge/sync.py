@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from .config import PrinterConfig
@@ -15,6 +16,8 @@ log = logging.getLogger(__name__)
 SPOOL_UUID_FIELD = "opt_instance_uuid"
 FILAMENT_UUID_FIELD = "opt_material_uuid"
 WEIGHT_EPSILON = 0.001
+HIGH_CONFIDENCE = 70
+SUGGESTION_THRESHOLD = 45
 
 
 @dataclass(frozen=True)
@@ -120,56 +123,110 @@ def _color_distance(a: str | None, b: str | None) -> float | None:
         return None
 
 
-def _name_matches(loaded_name: str | None, filament_name: str | None) -> bool:
-    """True if every word of the shorter name is in the longer one, like 'Blend Jet Black' and 'PC Blend Jet Black'."""
-    a, b = set((loaded_name or "").casefold().split()), set((filament_name or "").casefold().split())
-    return bool(a and b) and (a <= b or b <= a)
+def name_similarity(a: str | None, b: str | None) -> float:
+    if not a or not b:
+        return 0.0
+    tokens = [" ".join(sorted(name.casefold().split())) for name in (a, b)]
+    return SequenceMatcher(None, *tokens).ratio()
 
 
-def rank_spools_for_link(loaded: LoadedSpool, spools: list[dict]) -> list[dict]:
-    """Candidates for an unlinked spool, best guesses first. Nothing is linked until the user confirms."""
-    ranked = []
-    for spool in spools:
-        if spool.get("archived") or extra_value(spool, SPOOL_UUID_FIELD):
-            continue
-        filament = spool.get("filament") or {}
-        vendor = (filament.get("vendor") or {}).get("name") or ""
-        material = filament.get("material") or ""
-        score = 0
-        reasons = []
-        same_vendor = bool(loaded.brand) and vendor.casefold() == loaded.brand.casefold()
-        same_material = bool(loaded.material_type) and material.casefold() == loaded.material_type.casefold()
-        if same_vendor:
-            score += 4
-            reasons.append("same vendor")
-        if same_material:
-            score += 2
-            reasons.append("same material")
-        if _name_matches(loaded.material_name, filament.get("name")):
-            score += 3
-            reasons.append("similar name")
-        distance = _color_distance(loaded.color_hex, (filament.get("color_hex") or "").upper()[:6])
-        if distance is not None and distance < 0.1:
-            score += 1
-            reasons.append("similar color")
-        ranked.append(
-            {
-                "id": spool["id"],
-                "label": f"#{spool['id']} {vendor} {filament.get('name') or ''} ({material}, {round(spool.get('remaining_weight') or 0)} g)".replace("  ", " "),
-                "suggested": score >= 4,
-                "score": score,
-                "reasons": reasons,
-                "strong": same_vendor and same_material,
-                "initial_weight": spool.get("initial_weight"),
-                "spool_weight": spool.get("spool_weight"),
-                "used_weight": spool.get("used_weight"),
-                "color_hex": (filament.get("color_hex") or "").upper()[:6] or None,
-            }
-        )
-    ranked.sort(key=lambda s: (-s["score"], s["id"]))
+def score_spool(loaded: LoadedSpool, spool: dict, other_locations: tuple[str, ...] = ()) -> dict:
+    """How likely it is that a Spoolman spool is this physical spool, with the reasons."""
+    filament = spool.get("filament") or {}
+    vendor = (filament.get("vendor") or {}).get("name") or ""
+    material = filament.get("material") or ""
+    color = (filament.get("color_hex") or "").upper()[:6]
+    score = 0
+    reasons = []
+    if loaded.material_uuid and extra_value(filament, FILAMENT_UUID_FIELD) == loaded.material_uuid:
+        score += 40
+        reasons.append("Same OpenPrintTag material")
+    if loaded.brand and vendor.casefold() == loaded.brand.casefold():
+        score += 25
+        reasons.append("Same brand")
+    if loaded.material_type and material.casefold() == loaded.material_type.casefold():
+        score += 15
+        reasons.append("Same material type")
+    similarity = name_similarity(loaded.material_name, filament.get("name"))
+    if similarity >= 0.6:
+        score += round(25 * similarity)
+        reasons.append(f"Name {round(similarity * 100)}% similar")
+    distance = _color_distance(loaded.color_hex, color)
+    if distance is not None and distance < 0.05:
+        score += 10
+        reasons.append(f"Color very close (#{color} and #{loaded.color_hex})")
+    elif distance is not None and distance < 0.15:
+        score += 5
+        reasons.append(f"Color close (#{color} and #{loaded.color_hex})")
+    if loaded.nominal_weight and filament.get("weight") == loaded.nominal_weight:
+        score += 5
+        reasons.append("Same nominal weight")
+    remaining = spool.get("remaining_weight")
+    if remaining is not None and loaded.actual_weight is not None:
+        if abs(remaining - (loaded.actual_weight - (loaded.consumed_weight or 0))) <= 50:
+            score += 5
+            reasons.append("Remaining weight is close")
+    if spool.get("location") and spool["location"] in other_locations:
+        score -= 15
+        reasons.append("Located at another printer")
+    if score >= HIGH_CONFIDENCE:
+        confidence = "High"
+    elif score >= SUGGESTION_THRESHOLD:
+        confidence = "Medium"
+    else:
+        confidence = "Low"
+    return {
+        "id": spool["id"],
+        "label": f"#{spool['id']} {vendor} {filament.get('name') or ''} ({material}, {round(remaining or 0)} g)".replace("  ", " "),
+        "score": score,
+        "confidence": confidence,
+        "reasons": reasons,
+        "suggested": score >= SUGGESTION_THRESHOLD,
+    }
+
+
+def rank_spools_for_link(loaded: LoadedSpool, spools: list[dict], other_locations: tuple[str, ...] = ()) -> list[dict]:
+    """Candidates for an unlinked spool, best first. Nothing is linked until the user confirms."""
+    ranked = [
+        score_spool(loaded, spool, other_locations)
+        for spool in spools
+        if not spool.get("archived") and not extra_value(spool, SPOOL_UUID_FIELD)
+    ]
+    ranked.sort(key=lambda c: (-c["score"], c["id"]))
     for position, candidate in enumerate(ranked):
-        candidate["best"] = position == 0 and candidate["strong"]
+        candidate["best"] = position == 0 and candidate["suggested"]
     return ranked
+
+
+def _differs(before, after) -> bool:
+    if isinstance(before, (int, float)) and isinstance(after, (int, float)):
+        return abs(before - after) > WEIGHT_EPSILON
+    return before != after
+
+
+def build_link_changes(loaded: LoadedSpool, spool: dict, shared: int) -> list[dict]:
+    """The rows on the review page. Filament changes are off if other spools share the filament."""
+    filament = spool.get("filament") or {}
+    filament_on = shared == 0
+    rows = [
+        ("spool_instance", "spool", SPOOL_UUID_FIELD, "Link to this tag", extra_value(spool, SPOOL_UUID_FIELD), loaded.uuid, True),
+        ("spool_initial_weight", "spool", "initial_weight", "Spool: filament weight", spool.get("initial_weight"), loaded.actual_weight, True),
+        ("spool_spool_weight", "spool", "spool_weight", "Spool: empty weight", spool.get("spool_weight"), loaded.empty_weight, True),
+        ("spool_used_weight", "spool", "used_weight", "Spool: consumed", spool.get("used_weight"), loaded.consumed_weight, True),
+        ("filament_name", "filament", "name", "Filament: name", filament.get("name"), loaded.material_name, filament_on),
+        ("filament_color_hex", "filament", "color_hex", "Filament: color", (filament.get("color_hex") or "").upper() or None, loaded.color_hex, filament_on),
+        ("filament_weight", "filament", "weight", "Filament: nominal weight", filament.get("weight"), loaded.nominal_weight, filament_on),
+        ("filament_spool_weight", "filament", "spool_weight", "Filament: empty weight", filament.get("spool_weight"), loaded.empty_weight, filament_on),
+        ("filament_material", "filament", FILAMENT_UUID_FIELD, "Filament: OpenPrintTag material", extra_value(filament, FILAMENT_UUID_FIELD), loaded.material_uuid, filament_on),
+    ]
+    changes = []
+    for key, target, field, label, before, after, checked in rows:
+        if after is None or not _differs(before, after):
+            continue
+        changes.append(
+            {"key": key, "target": target, "field": field, "label": label, "before": before, "after": after, "checked": checked, "locked": key == "spool_instance"}
+        )
+    return changes
 
 
 class State:
@@ -291,25 +348,52 @@ class Bridge:
             return
         self.state.record(loaded.uuid, current, action)
 
-    def link_spool(self, loaded: LoadedSpool, spool_id: int, location: str, update_weights: bool) -> None:
-        """Link an existing Spoolman spool. Its other extra fields, like card_uids, are kept."""
+    def link_spool(self, loaded: LoadedSpool, spool_id: int, selected: set[str]) -> None:
+        """Apply the review page's choices. Other extra fields, like card_uids, are kept."""
         self._ensure_extra_fields()
         spool = self.spoolman.get_spool(spool_id)
         taken = extra_value(spool, SPOOL_UUID_FIELD)
         if taken and taken != loaded.uuid:
             raise SpoolmanError(f"Spool {spool_id} is already linked to instance {taken}")
-        extra = dict(spool.get("extra") or {})
-        extra[SPOOL_UUID_FIELD] = encode_extra(loaded.uuid)
-        body: dict = {"extra": extra}
-        if location:
-            body["location"] = location
-        consumed = float(loaded.consumed_weight or 0)
-        if update_weights:
-            body.update(initial_weight=loaded.actual_weight, spool_weight=loaded.empty_weight, used_weight=consumed)
-        self.spoolman.update_spool(spool_id, body)
+        changes = {c["key"]: c for c in build_link_changes(loaded, spool, 0)}
+        spool_extra = dict(spool.get("extra") or {})
+        spool_extra[SPOOL_UUID_FIELD] = encode_extra(loaded.uuid)
+        spool_body: dict = {"extra": spool_extra}
+        filament_body: dict = {}
+        filament = spool.get("filament") or {}
+        for key in selected:
+            change = changes.get(key)
+            if not change or change["locked"]:
+                continue
+            if change["field"] == FILAMENT_UUID_FIELD:
+                extra = dict(filament.get("extra") or {})
+                extra[FILAMENT_UUID_FIELD] = encode_extra(change["after"])
+                filament_body["extra"] = extra
+            elif change["target"] == "spool":
+                spool_body[change["field"]] = change["after"]
+            else:
+                filament_body[change["field"]] = change["after"]
+        if filament_body:
+            self.spoolman.update_filament(filament["id"], dict(sorted(filament_body.items())))
+        self.spoolman.update_spool(spool_id, dict(sorted(spool_body.items())))
         # The spool now accounts for everything up to this point, or starts counting from it.
         if loaded.consumed_weight is not None and not self.spoolman.dry_run:
-            self.state.record(loaded.uuid, consumed, "baseline")
+            self.state.record(loaded.uuid, float(loaded.consumed_weight), "baseline")
+
+    def unlink_spool(self, spool_id: int) -> None:
+        spool = self.spoolman.get_spool(spool_id)
+        extra = {k: v for k, v in (spool.get("extra") or {}).items() if k != SPOOL_UUID_FIELD}
+        self.spoolman.update_spool(spool_id, {"extra": extra})
+        if not self.spoolman.dry_run and extra_value(self.spoolman.get_spool(spool_id), SPOOL_UUID_FIELD):
+            raise SpoolmanError(f"Spoolman kept the link on spool {spool_id}")
+
+    def create_preview(self, loaded: LoadedSpool) -> dict:
+        vendor_id = next((v["id"] for v in self.spoolman.list_vendors() if v["name"].casefold() == (loaded.brand or "").casefold()), None)
+        filament_exists = vendor_id is not None and any(
+            (f.get("vendor") or {}).get("id") == vendor_id and (f.get("name") or "").casefold() == (loaded.material_name or "").casefold()
+            for f in self.spoolman.list_filaments()
+        )
+        return {"vendor_exists": vendor_id is not None, "filament_exists": filament_exists}
 
     def create_spool(self, loaded: LoadedSpool, location: str) -> dict | None:
         self._ensure_extra_fields()

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Review link{% endblock %}
+{% block main %}
+<h1>Review before linking</h1>
+<p class="lead">Link the {{ loaded.brand }} {{ loaded.material_name }} in tool {{ loaded.tool_id }} to Spoolman spool {{ spool.id }}. Nothing has been written yet.</p>
+{% if shared %}<p class="notice error">This filament is used by {{ shared }} other spool{{ 's' if shared != 1 }}. Filament changes would affect them too, so they are off by default.</p>{% endif %}
+<form method="post" action="{{ url_for('link_spool') }}" class="stack wide">
+  <input type="hidden" name="uuid" value="{{ loaded.uuid }}">
+  <input type="hidden" name="spool_id" value="{{ spool.id }}">
+  <table class="compare">
+    <thead><tr><th scope="col">Apply</th><th scope="col">Change</th><th scope="col">Now</th><th scope="col">After</th></tr></thead>
+    <tbody>
+      {% for change in changes %}
+      <tr>
+        <td>{% if change.locked %}<span class="hint">Always</span>{% else %}<input type="checkbox" name="apply" value="{{ change.key }}" aria-label="Apply {{ change.label }}" {{ 'checked' if change.checked }}>{% endif %}</td>
+        <th scope="row">{{ change.label }}</th>
+        <td>{{ change.before if change.before is not none else 'Not set' }}</td>
+        <td>{{ change.after }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">Not changed: other extra fields such as <code>card_uids</code>, price and lot number. The location is set on the next poll, once the spool is linked.</p>
+  {% if settings.dry_run %}<p class="hint">Dry run is on, so confirming shows the calls without making them.</p>{% endif %}
+  <div class="buttons">
+    <button>Confirm and link</button>
+    <a class="button quiet" href="{{ url_for('dashboard') }}">Back</a>
+  </div>
+</form>
+{% endblock %}

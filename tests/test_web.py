@@ -215,48 +215,98 @@ def test_dashboard_shows_a_linked_spool(respx_mock, tmp_path):
     assert "secret-refresh" not in page
 
 
-def unlinked_service(respx_mock, tmp_path, **env):
+SPOOL = {"id": 52, "remaining_weight": 1000, "initial_weight": 1000, "spool_weight": 186, "used_weight": 0, "filament": {"id": 49, "name": "Blend Jet Black", "material": "PC", "color_hex": "24292A", "weight": 1000, "spool_weight": 186, "vendor": {"name": "Prusament"}, "extra": {}}, "extra": {"card_uids": json.dumps("ABC")}}
+
+
+def spoolman_writes(respx_mock):
+    return [c.request for c in respx_mock.calls if c.request.method != "GET" and str(c.request.url).startswith(SPOOLMAN)]
+
+
+def unlinked_service(respx_mock, tmp_path, spools=None, **env):
     respx_mock.post(GRAPHQL).mock(side_effect=graphql)
     mock_fields(respx_mock)
-    respx_mock.get(url__startswith=f"{SPOOLMAN}/api/v1/spool?").respond(
-        json=[{"id": 52, "remaining_weight": 1000, "filament": {"name": "Blend", "material": "PC", "color_hex": "24292A", "vendor": {"name": "Prusament"}}, "extra": {"card_uids": json.dumps("ABC")}}]
-    )
+    respx_mock.get(url__startswith=f"{SPOOLMAN}/api/v1/spool?").respond(json=spools if spools is not None else [SPOOL])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/52").respond(json=SPOOL)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/vendor").respond(json=[{"id": 13, "name": "Prusament"}])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/filament").respond(json=[])
     service = configured(tmp_path, **env)
     assert service.poll_once() is True
     return service
 
 
 @respx.mock(assert_all_called=False)
-def test_dashboard_offers_a_link_for_an_unlinked_spool(respx_mock, tmp_path):
-    page = signed_in(unlinked_service(respx_mock, tmp_path)).get("/").text
+def test_dashboard_preselects_the_best_match_and_writes_nothing(respx_mock, tmp_path):
+    page = signed_in(unlinked_service(respx_mock, tmp_path, DRY_RUN="false")).get("/").text
     assert "not linked to Spoolman" in page
-    assert "Suggested" in page
-    assert "#52 Prusament Blend" in page
-    assert "Best match in Spoolman" in page
-    assert "Confirm and link" in page
-    assert "same vendor, same material" in page
+    assert "#52 Prusament Blend Jet Black" in page
+    assert "High confidence" in page
+    assert "Same brand" in page
+    assert 'value="52" checked' in page
+    assert spoolman_writes(respx_mock) == []
 
 
 @respx.mock(assert_all_called=False)
-def test_dry_run_refuses_link_and_create(respx_mock, tmp_path):
-    service = unlinked_service(respx_mock, tmp_path)
-    client = signed_in(service)
-    client.post("/spool/link", data={"uuid": UUID, "spool_id": "52"})
-    client.post("/spool/create", data={"uuid": UUID})
-    assert [c.request.method for c in respx_mock.calls if "spool" in str(c.request.url) and c.request.method != "GET"] == []
+def test_create_new_is_preselected_when_nothing_matches(respx_mock, tmp_path):
+    other = {"id": 1, "remaining_weight": 1, "filament": {"name": "Pink", "material": "PLA", "color_hex": "FF6762", "vendor": {"name": "eSun"}}, "extra": {}}
+    page = signed_in(unlinked_service(respx_mock, tmp_path, spools=[other])).get("/").text
+    assert 'value="new" checked' in page
 
 
 @respx.mock(assert_all_called=False)
-def test_live_link_from_the_dashboard(respx_mock, tmp_path):
+def test_review_shows_the_diff_and_writes_nothing(respx_mock, tmp_path):
+    client = signed_in(unlinked_service(respx_mock, tmp_path, DRY_RUN="false"))
+    page = client.get("/spool/review", query_string={"uuid": UUID, "choice": "52"}).text
+    assert "Review before linking" in page
+    assert "1000" in page and "959" in page and "24292A" in page and "212929" in page
+    assert "card_uids" in page
+    assert "other spool" not in page
+    assert spoolman_writes(respx_mock) == []
+
+
+@respx.mock(assert_all_called=False)
+def test_review_warns_about_a_shared_filament(respx_mock, tmp_path):
+    other = {**SPOOL, "id": 60, "extra": {}}
+    client = signed_in(unlinked_service(respx_mock, tmp_path, spools=[SPOOL, other]))
+    page = client.get("/spool/review", query_string={"uuid": UUID, "choice": "52"}).text
+    assert "used by 1 other spool" in page
+
+
+@respx.mock(assert_all_called=False)
+def test_dry_run_confirm_shows_the_calls_without_writing(respx_mock, tmp_path):
+    client = signed_in(unlinked_service(respx_mock, tmp_path))
+    page = client.post("/spool/link", data={"uuid": UUID, "spool_id": "52", "apply": ["spool_initial_weight"]}).text
+    assert "Dry run: would perform these writes" in page
+    assert "PATCH /spool/52" in page
+    assert spoolman_writes(respx_mock) == []
+    page = client.post("/spool/create", data={"uuid": UUID, "name": "PC Blend Jet Black", "location": "Shelf"}).text
+    assert "POST /spool" in page and "POST /filament" in page and "Shelf" in page
+    assert spoolman_writes(respx_mock) == []
+    page = client.post("/spool/unlink", data={"spool_id": "52"}).text
+    assert "PATCH /spool/52" in page
+    assert spoolman_writes(respx_mock) == []
+
+
+@respx.mock(assert_all_called=False)
+def test_live_confirm_writes_and_links_to_spoolman(respx_mock, tmp_path):
     service = unlinked_service(respx_mock, tmp_path, DRY_RUN="false")
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/52").respond(json={"id": 52, "extra": {"card_uids": json.dumps("ABC")}})
     patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/52").respond(json={})
     client = signed_in(service)
-    client.post("/spool/link", data={"uuid": UUID, "spool_id": "52", "update_weights": "on"})
+    page = client.post("/spool/link", data={"uuid": UUID, "spool_id": "52", "apply": ["spool_initial_weight"]}).text
+    assert "Linked to spool 52" in page
+    assert f"{SPOOLMAN}/spool/show/52" in page
     body = json.loads(patch.calls[0].request.content)
     assert json.loads(body["extra"]["opt_instance_uuid"]) == UUID
     assert body["extra"]["card_uids"] == json.dumps("ABC")
     assert body["initial_weight"] == 959
+    assert "spool_weight" not in body
+
+
+@respx.mock(assert_all_called=False)
+def test_create_review_shows_what_is_reused(respx_mock, tmp_path):
+    client = signed_in(unlinked_service(respx_mock, tmp_path))
+    page = client.get("/spool/review", query_string={"uuid": UUID, "choice": "new"}).text
+    assert "Uses the existing vendor" in page
+    assert "Creates a new filament" in page
 
 
 @respx.mock(assert_all_called=False)
@@ -275,8 +325,3 @@ def test_two_printers_are_both_polled(respx_mock, tmp_path):
     assert set(service.status) == {"a", "c"}
 
 
-@respx.mock(assert_all_called=False)
-def test_a_suggestion_writes_nothing_until_it_is_confirmed(respx_mock, tmp_path):
-    service = unlinked_service(respx_mock, tmp_path, DRY_RUN="false")
-    signed_in(service).get("/")
-    assert [c.request.method for c in respx_mock.calls if "/spool" in str(c.request.url) and c.request.method != "GET"] == []

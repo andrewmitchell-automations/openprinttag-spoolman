@@ -45,11 +45,11 @@ Watch your first print in dry-run mode, then turn dry run off in the settings on
 
 ## Linking spools
 
-If the bridge does not know a loaded spool, it checks Spoolman and suggests the best match by vendor, material, name and color. The dashboard shows the match next to the weights on the tag, and nothing is linked until you confirm. Confirming needs dry run to be off, because a dry run never writes to Spoolman.
+If the bridge does not know a loaded spool, it checks Spoolman and suggests the most likely matches by brand, material, name, color, weight and OpenPrintTag material. Each suggestion shows a confidence level and the reasons. If nothing looks likely, it suggests creating a new spool.
 
-- **Confirm and link:** links the suggested spool. You choose whether to update Spoolman with the weights from the tag. Other extra fields are kept.
-- **Link to another spool:** the list shows suggested spools first.
-- **Create a new spool:** the bridge finds or creates the vendor and filament, then creates the spool with the weights from the tag.
+Nothing is written until you confirm. The review page shows each change before and after, and you choose which ones to apply. Filament changes are off by default if other spools share the filament. Other extra fields are kept.
+
+In a dry run you can go through the same steps, and confirming shows the exact API calls without making them. Linked spools can be unlinked from the dashboard.
 
 Set `AUTO_CREATE` or turn it on in the settings to create unknown spools without asking.
 
@@ -97,6 +97,7 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 
 | | |
 |---|---|
+| ![Suggested matches for an unlinked spool](docs/screenshots/link-suggestion.png) | ![Reviewing a link before confirming](docs/screenshots/link-confirm.png) |
 | ![Setting up the Connect login](docs/screenshots/setup-connect.png) | ![Choosing printers](docs/screenshots/setup-printers.png) |
 | ![Choosing how the bridge runs](docs/screenshots/setup-operation.png) | ![The dashboard on a phone in dark mode](docs/screenshots/dashboard-mobile-dark.png) |
 

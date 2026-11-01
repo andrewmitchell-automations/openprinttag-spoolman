@@ -137,14 +137,26 @@ dd { margin: 0; font-size: 1.125rem; font-variant-numeric: tabular-nums; }
 .unlinked > p { margin: 0 0 0.75rem; }
 .unlinked form { margin-top: 0.75rem; }
 
-.match { margin-bottom: 1rem; padding: 1rem; border-left: 4px solid var(--accent); background: var(--plate); }
-.match h4 { margin: 0; color: var(--muted); font: 600 0.875rem var(--body); }
-.match-name { margin: 0.25rem 0 0.5rem; font: 700 1.125rem var(--display); }
-.match form { margin-top: 0.75rem; }
+.choices { display: grid; gap: 0.5rem; margin: 0; padding: 0; border: 0; }
+.choices legend { margin-bottom: 0.5rem; padding: 0; font-weight: 600; }
+.choice { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.6rem 0.75rem; border: 1px solid var(--line); font-weight: 400; cursor: pointer; }
+.choice > span { display: grid; flex: 1; gap: 0.2rem; min-width: 0; }
+.choice:has(input:checked) { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.choice input[type="radio"] { margin-top: 0.3rem; accent-color: var(--accent); }
+.choice-name { font-weight: 600; overflow-wrap: anywhere; }
+.confidence { font-size: 0.875rem; font-weight: 600; }
+.confidence-high { color: var(--ok); }
+.confidence-medium { color: var(--accent); }
+.confidence-low { color: var(--muted); }
+.reasons { max-width: none; }
 .compare { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.compare th, .compare td { padding: 0.3rem 0.75rem 0.3rem 0; border-bottom: 1px solid var(--line); text-align: left; font-weight: 400; }
+.compare th, .compare td { padding: 0.45rem 0.75rem 0.45rem 0; border-bottom: 1px solid var(--line); text-align: left; font-weight: 400; overflow-wrap: anywhere; }
+.compare td:first-child:has(.hint) { white-space: nowrap; }
 .compare thead th { color: var(--muted); font-size: 0.875rem; }
-.other-choices form { margin-top: 0.75rem; }
+.stack.wide, table.wide { max-width: 48rem; }
+table.wide { margin-bottom: 1.5rem; }
+a.button { display: inline-block; padding: 0.55rem 1.1rem; border: 1px solid var(--accent); border-radius: 3px; color: var(--accent); font-weight: 600; text-decoration: none; }
+.calls { padding-left: 1.25rem; }
 
 .actions { margin-top: 1rem; }
 .actions ul { padding-left: 1.25rem; }
@@ -157,7 +169,7 @@ label { display: grid; gap: 0.25rem; font-weight: 600; }
 label.check { display: flex; gap: 0.5rem; align-items: flex-start; font-weight: 400; }
 input[type="checkbox"] { width: 1.15rem; height: 1.15rem; margin-top: 0.2rem; accent-color: var(--accent); }
 
-input:not([type="checkbox"]), select {
+input:not([type="checkbox"]):not([type="radio"]), select {
   width: 100%;
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--muted);

@@ -50,57 +50,46 @@
       </dl>
 
       {% if tool.url %}
-      <p>Linked to <a href="{{ tool.url }}">spool {{ tool.spool_id }} in Spoolman</a>.</p>
+      <p>Linked to <a href="{{ tool.url }}">spool {{ tool.spool_id }} in Spoolman</a>. <a href="{{ url_for('unlink_review', spool_id=tool.spool_id) }}">Unlink</a></p>
       {% elif not spool.is_from_nfc %}
       <p class="hint">This spool is not tracked, because it was not read from an NFC tag.</p>
       {% else %}
       <div class="unlinked">
         <p><strong>This spool is not linked to Spoolman.</strong> Consumption is not recorded until you confirm a choice.</p>
-        {% if settings.dry_run %}<p class="hint">Turn off dry run in the <a href="{{ url_for('setup', step='mode') }}">settings</a> to link or create this spool.</p>{% endif %}
         {% set best = tool.candidates|selectattr('best')|first %}
-        {% if best %}
-        <section class="match">
-          <h4>Best match in Spoolman</h4>
-          <p class="match-name">{{ best.label }}</p>
-          <p class="hint">Suggested because of: {{ best.reasons|join(', ') }}. Check that this is the same physical spool.</p>
-          <form method="post" action="{{ url_for('link_spool') }}" class="stack">
-            <input type="hidden" name="uuid" value="{{ spool.uuid }}">
-            <input type="hidden" name="spool_id" value="{{ best.id }}">
-            <table class="compare">
-              <thead><tr><th scope="col">Value</th><th scope="col">In Spoolman</th><th scope="col">On the tag</th></tr></thead>
-              <tbody>
-                <tr><th scope="row">Filament weight</th><td>{{ best.initial_weight|grams }}</td><td>{{ spool.actual_weight|grams }}</td></tr>
-                <tr><th scope="row">Empty spool</th><td>{{ best.spool_weight|grams }}</td><td>{{ spool.empty_weight|grams }}</td></tr>
-                <tr><th scope="row">Consumed</th><td>{{ best.used_weight|grams }}</td><td>{{ spool.consumed_weight|grams }}</td></tr>
-              </tbody>
-            </table>
-            <label class="check"><input type="checkbox" name="update_weights" checked> Update Spoolman with the weights from the tag</label>
-            <button {{ 'disabled' if settings.dry_run }}>Confirm and link</button>
-          </form>
-        </section>
-        {% endif %}
-        <details class="other-choices" {{ 'open' if not best }}>
-          <summary>{{ 'Choose something else' if best else 'Choose what to do' }}</summary>
-          <form method="post" action="{{ url_for('link_spool') }}" class="stack">
-            <input type="hidden" name="uuid" value="{{ spool.uuid }}">
-            <label>Link to another spool
-              <select name="spool_id" required>
-                <option value="">Choose a spool</option>
-                {% set suggested = tool.candidates|selectattr('suggested')|list %}
-                {% if suggested %}
-                <optgroup label="Suggested">{% for c in suggested %}<option value="{{ c.id }}">{{ c.label }}</option>{% endfor %}</optgroup>
-                {% endif %}
-                <optgroup label="All spools">{% for c in tool.candidates|rejectattr('suggested') %}<option value="{{ c.id }}">{{ c.label }}</option>{% endfor %}</optgroup>
-              </select>
+        {% set suggestions = tool.candidates|selectattr('suggested')|list %}
+        <form method="get" action="{{ url_for('review_choice') }}" class="stack">
+          <input type="hidden" name="uuid" value="{{ spool.uuid }}">
+          <fieldset class="choices">
+            <legend>What should this spool be?</legend>
+            {% for c in suggestions[:5] %}
+            <label class="choice{{ ' top' if c.best }}">
+              <input type="radio" name="choice" value="{{ c.id }}" {{ 'checked' if c.best }} required>
+              <span>
+                <span class="choice-name">{{ c.label }}</span>
+                <span class="confidence confidence-{{ c.confidence|lower }}">{{ c.confidence }} confidence</span>
+                <span class="hint reasons">{{ c.reasons|join(', ') }}</span>
+              </span>
             </label>
-            <label class="check"><input type="checkbox" name="update_weights" checked> Update Spoolman with the weights from the tag</label>
-            <button class="quiet" {{ 'disabled' if settings.dry_run }}>Link spool</button>
-          </form>
-          <form method="post" action="{{ url_for('create_spool') }}">
-            <input type="hidden" name="uuid" value="{{ spool.uuid }}">
-            <button class="quiet" {{ 'disabled' if settings.dry_run }}>Create new spool</button>
-          </form>
-        </details>
+            {% endfor %}
+            <label class="choice">
+              <input type="radio" name="choice" value="other" required>
+              <span>
+                <span class="choice-name">Another spool</span>
+                <select name="other_spool" aria-label="Another spool">
+                  <option value="">Choose a spool</option>
+                  {% for c in tool.candidates %}<option value="{{ c.id }}">{{ c.label }}</option>{% endfor %}
+                </select>
+              </span>
+            </label>
+            <label class="choice{{ ' top' if not best }}">
+              <input type="radio" name="choice" value="new" {{ 'checked' if not best }} required>
+              <span><span class="choice-name">Create a new spool</span></span>
+            </label>
+          </fieldset>
+          <button>Review</button>
+        </form>
+        <p class="hint">Nothing is written until you confirm on the next page.</p>
       </div>
       {% endif %}
     </div>

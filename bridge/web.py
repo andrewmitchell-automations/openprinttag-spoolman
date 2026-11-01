@@ -213,36 +213,62 @@ def create_app(service: Service) -> Flask:
         flash("Polling the printers now. Reload this page in a moment.", "ok")
         return redirect(url_for("dashboard"))
 
-    def require_live():
-        if service.settings.dry_run:
-            flash("A dry run writes nothing to Spoolman. Turn off dry run to do this.", "error")
-            return True
-        return False
+    def result(heading, calls, spool_id=None):
+        url = service.spoolman.spool_url(spool_id) if spool_id and not service.settings.dry_run else None
+        return render_template("result.html", heading=heading, calls=calls, spool_url=url)
+
+    def failed(prefix, error):
+        flash(f"{prefix}: {error}", "error")
+        return redirect(url_for("dashboard"))
+
+    @app.get("/spool/review")
+    def review_choice():
+        """Reads only. The dashboard's choice opens the matching review page."""
+        uuid = request.args.get("uuid", "")
+        choice = request.args.get("choice", "")
+        if choice == "other":
+            choice = request.args.get("other_spool", "")
+        try:
+            if choice == "new":
+                return render_template("create_review.html", **service.create_review(uuid))
+            return render_template("link_review.html", **service.link_review(uuid, int(choice)))
+        except ValueError:
+            return failed("Could not open the review", "choose a spool that is still available")
+        except Exception as e:
+            return failed("Could not open the review", e)
 
     @app.post("/spool/link")
     def link_spool():
-        if require_live():
-            return redirect(url_for("dashboard"))
         try:
             spool_id = int(request.form["spool_id"])
-            service.link(request.form["uuid"], spool_id, request.form.get("update_weights") == "on")
-            flash(f"Linked to spool {spool_id} in Spoolman.", "ok")
+            calls = service.link(request.form["uuid"], spool_id, set(request.form.getlist("apply")))
         except (KeyError, ValueError):
-            flash("Choose a spool to link to.", "error")
+            return failed("Could not link the spool", "that spool is no longer available")
         except Exception as e:
-            flash(f"Could not link the spool: {e}", "error")
-        return redirect(url_for("dashboard"))
+            return failed("Could not link the spool", e)
+        heading = "Nothing was linked" if service.settings.dry_run else f"Linked to spool {spool_id}"
+        return result(heading, calls, spool_id)
 
     @app.post("/spool/create")
     def create_spool():
-        if require_live():
-            return redirect(url_for("dashboard"))
         try:
-            service.create(request.form["uuid"])
-            flash("Created the spool in Spoolman.", "ok")
+            calls = service.create(request.form["uuid"], request.form.get("name", "").strip()[:64], request.form.get("location", "").strip()[:64])
         except Exception as e:
-            flash(f"Could not create the spool: {e}", "error")
-        return redirect(url_for("dashboard"))
+            return failed("Could not create the spool", e)
+        return result("Nothing was created" if service.settings.dry_run else "Created the spool", calls)
+
+    @app.get("/spool/<int:spool_id>/unlink")
+    def unlink_review(spool_id):
+        return render_template("unlink.html", spool_id=spool_id)
+
+    @app.post("/spool/unlink")
+    def unlink_spool():
+        try:
+            spool_id = int(request.form["spool_id"])
+            calls = service.unlink(spool_id)
+        except Exception as e:
+            return failed("Could not unlink the spool", e)
+        return result("Nothing was unlinked" if service.settings.dry_run else f"Unlinked spool {spool_id}", calls, spool_id)
 
     def advance(step: str):
         service.reload()

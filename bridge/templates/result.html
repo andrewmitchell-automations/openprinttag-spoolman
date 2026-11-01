@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }}{% endblock %}
+{% block main %}
+<h1>{{ heading }}</h1>
+{% if spool_url %}<p>Open <a href="{{ spool_url }}">the spool in Spoolman</a>.</p>{% endif %}
+{% if calls %}
+<p class="lead">{{ 'Dry run: would perform these writes.' if settings.dry_run else 'Writes performed:' }}</p>
+<ul class="calls">{% for call in calls %}<li><code>{{ call }}</code></li>{% endfor %}</ul>
+{% else %}
+<p>No writes were needed.</p>
+{% endif %}
+<p><a href="{{ url_for('dashboard') }}">Back to the dashboard</a></p>
+{% endblock %}

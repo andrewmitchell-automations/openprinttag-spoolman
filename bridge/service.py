@@ -4,11 +4,12 @@ because two simultaneous token refreshes could invalidate a rotated refresh toke
 import logging
 import threading
 from collections import deque
+from dataclasses import replace
 
 from .config import ConfigError, Settings, load_settings
 from .connect import ConnectAuthError, ConnectClient, TokenStore, Tokens, jwt_expiry
 from .spoolman import SpoolmanClient
-from .sync import Bridge, LoadedSpool, State, rank_spools_for_link
+from .sync import Bridge, LoadedSpool, State, build_link_changes, rank_spools_for_link
 
 log = logging.getLogger(__name__)
 
@@ -162,22 +163,61 @@ class Service:
                     return tool["spool"], entry["config"].location
         return None
 
+    def _other_locations(self, loaded: LoadedSpool) -> tuple[str, ...]:
+        return tuple(
+            entry["config"].location
+            for entry in self.status.values()
+            if entry["config"].location and all(tool["spool"].uuid != loaded.uuid for tool in entry.get("tools", []))
+        )
+
     def link_candidates(self, loaded: LoadedSpool) -> list[dict]:
         with self.lock:
-            return rank_spools_for_link(loaded, self.spoolman.list_spools())
+            return rank_spools_for_link(loaded, self.spoolman.list_spools(), self._other_locations(loaded))
 
-    def link(self, uuid: str, spool_id: int, update_weights: bool) -> None:
-        with self.lock:
-            found = self.find_loaded(uuid)
-            if not found:
-                raise ValueError("That spool is no longer loaded")
-            self.bridge.link_spool(found[0], spool_id, found[1], update_weights)
-        self.wake.set()
+    def _loaded(self, uuid: str) -> tuple[LoadedSpool, str]:
+        found = self.find_loaded(uuid)
+        if not found:
+            raise ValueError("That spool is no longer loaded")
+        return found
 
-    def create(self, uuid: str) -> None:
+    def link_review(self, uuid: str, spool_id: int) -> dict:
         with self.lock:
-            found = self.find_loaded(uuid)
-            if not found:
-                raise ValueError("That spool is no longer loaded")
-            self.bridge.create_spool(found[0], found[1])
+            loaded, _ = self._loaded(uuid)
+            spools = self.spoolman.list_spools()
+            spool = next((s for s in spools if s["id"] == spool_id), None)
+            if spool is None:
+                raise ValueError(f"Spool {spool_id} was not found")
+            filament_id = (spool.get("filament") or {}).get("id")
+            shared = sum(
+                1
+                for other in spools
+                if other["id"] != spool_id and filament_id is not None and (other.get("filament") or {}).get("id") == filament_id
+            )
+            return {"loaded": loaded, "spool": spool, "shared": shared, "changes": build_link_changes(loaded, spool, shared)}
+
+    def _capture(self, action) -> list[str]:
+        self.spoolman.captured.clear()
+        action()
+        calls = list(self.spoolman.captured)
         self.wake.set()
+        return calls
+
+    def link(self, uuid: str, spool_id: int, selected: set[str]) -> list[str]:
+        with self.lock:
+            loaded, _ = self._loaded(uuid)
+            return self._capture(lambda: self.bridge.link_spool(loaded, spool_id, selected))
+
+    def unlink(self, spool_id: int) -> list[str]:
+        with self.lock:
+            return self._capture(lambda: self.bridge.unlink_spool(spool_id))
+
+    def create_review(self, uuid: str) -> dict:
+        with self.lock:
+            loaded, location = self._loaded(uuid)
+            return {"loaded": loaded, "location": location, "preview": self.bridge.create_preview(loaded)}
+
+    def create(self, uuid: str, name: str, location: str) -> list[str]:
+        with self.lock:
+            loaded, _ = self._loaded(uuid)
+            named = replace(loaded, material_name=name or loaded.material_name)
+            return self._capture(lambda: self.bridge.create_spool(named, location))

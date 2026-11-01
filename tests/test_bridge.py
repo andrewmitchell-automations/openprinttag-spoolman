@@ -18,7 +18,9 @@ from bridge.sync import (
     consumption_step,
     index_spools,
     parse_loaded_spools,
+    build_link_changes,
     rank_spools_for_link,
+    score_spool,
 )
 
 SPOOLMAN = "https://spoolman.test"
@@ -496,27 +498,96 @@ def linker(tmp_path):
     return make_bridge(tmp_path, printer(consumed=30), auto_create=False).bridge
 
 
+SPOOL_52 = {
+    "id": 52,
+    "initial_weight": 1000.0,
+    "spool_weight": 186.0,
+    "used_weight": 0.0,
+    "remaining_weight": 1000.0,
+    "extra": {"card_uids": json.dumps("ABC")},
+    "filament": {"id": 49, "name": "Blend Jet Black", "material": "PC", "color_hex": "24292A", "weight": 1000.0, "spool_weight": 186.0, "extra": {"variant": json.dumps("x")}, "vendor": {"name": "Prusament"}},
+}
+ALL_KEYS = {"spool_initial_weight", "spool_spool_weight", "spool_used_weight", "filament_name", "filament_color_hex", "filament_spool_weight", "filament_material"}
+
+
+def loaded_spool(consumed=30):
+    return parse_loaded_spools(printer(consumed=consumed))[0]
+
+
+def test_the_real_case_is_a_high_confidence_match():
+    other = {**SPOOL_52, "id": 53, "remaining_weight": 800, "filament": {**SPOOL_52["filament"], "name": "Blend Natural", "color_hex": "EEEEEE"}}
+    ranked = rank_spools_for_link(loaded_spool(0), [other, SPOOL_52])
+    assert ranked[0]["id"] == 52
+    assert ranked[0]["best"] is True
+    assert ranked[0]["confidence"] == "High"
+    assert "Same brand" in ranked[0]["reasons"]
+    assert any(r.startswith("Name 9") for r in ranked[0]["reasons"])
+    assert any(r.startswith("Color very close") for r in ranked[0]["reasons"])
+    assert ranked[1]["best"] is False
+
+
+def test_unrelated_spools_are_not_suggested():
+    spool = {"id": 1, "filament": {"name": "Pink", "material": "PLA", "color_hex": "FF6762", "vendor": {"name": "eSun"}}}
+    ranked = rank_spools_for_link(loaded_spool(), [spool])
+    assert (ranked[0]["suggested"], ranked[0]["best"], ranked[0]["confidence"]) == (False, False, "Low")
+
+
+def test_the_same_material_uuid_counts_for_a_lot():
+    filament = {"name": "Other", "material": "PLA", "extra": {"opt_material_uuid": json.dumps(MATERIAL_UUID)}, "vendor": {"name": "eSun"}}
+    assert rank_spools_for_link(loaded_spool(), [{"id": 1, "filament": filament}])[0]["score"] >= 40
+
+
+def test_a_spool_at_another_printer_scores_lower():
+    at_printer = {**SPOOL_52, "location": "Office"}
+    assert score_spool(loaded_spool(), at_printer, ("Office",))["score"] < score_spool(loaded_spool(), at_printer)["score"]
+
+
+def test_linked_and_archived_spools_are_not_candidates():
+    spools = [{**SPOOL_52, "id": 1, "archived": True}, {**SPOOL_52, "id": 2, "extra": {"opt_instance_uuid": json.dumps("taken")}}]
+    assert rank_spools_for_link(loaded_spool(), spools) == []
+
+
+def test_changes_show_before_and_after():
+    changes = {c["key"]: c for c in build_link_changes(loaded_spool(), SPOOL_52, 0)}
+    assert (changes["spool_initial_weight"]["before"], changes["spool_initial_weight"]["after"]) == (1000.0, 959)
+    assert (changes["filament_color_hex"]["before"], changes["filament_color_hex"]["after"]) == ("24292A", "212929")
+    assert changes["spool_instance"]["locked"] is True
+    assert all(c["checked"] for c in changes.values())
+    assert "filament_weight" not in changes
+
+
+def test_filament_changes_are_off_when_the_filament_is_shared():
+    changes = build_link_changes(loaded_spool(), SPOOL_52, 2)
+    assert all(c["checked"] is False for c in changes if c["target"] == "filament")
+    assert all(c["checked"] is True for c in changes if c["target"] == "spool")
+
+
 @respx.mock(assert_all_called=False)
-def test_link_keeps_other_extra_fields_and_updates_weights(respx_mock, tmp_path):
+def test_link_applies_the_selected_changes_and_keeps_extras(respx_mock, tmp_path):
     mock_fields(respx_mock)
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/52").respond(json={"id": 52, "extra": {"card_uids": json.dumps("ABC")}})
-    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/52").respond(json={})
-    loaded = parse_loaded_spools(printer(consumed=30))[0]
-    linker(tmp_path).link_spool(loaded, 52, "Core One", update_weights=True)
-    body = json.loads(patch.calls[0].request.content)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/52").respond(json=SPOOL_52)
+    spool_patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/52").respond(json={})
+    filament_patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/filament/49").respond(json={})
+    make_bridge(tmp_path, printer(), auto_create=False).bridge.link_spool(loaded_spool(), 52, ALL_KEYS)
+    body = json.loads(spool_patch.calls[0].request.content)
     assert body["extra"] == {"card_uids": json.dumps("ABC"), "opt_instance_uuid": json.dumps(UUID)}
     assert (body["initial_weight"], body["spool_weight"], body["used_weight"]) == (959, 277, 30)
-    assert body["location"] == "Core One"
+    assert "location" not in body
+    filament = json.loads(filament_patch.calls[0].request.content)
+    assert (filament["name"], filament["color_hex"], filament["spool_weight"]) == ("PC Blend Jet Black", "212929", 277)
+    assert filament["extra"] == {"variant": json.dumps("x"), "opt_material_uuid": json.dumps(MATERIAL_UUID)}
     assert json.loads((tmp_path / "state.json").read_text())["consumed"][UUID] == 30
 
 
 @respx.mock(assert_all_called=False)
-def test_link_without_weights_leaves_them_alone(respx_mock, tmp_path):
+def test_link_with_nothing_selected_only_sets_the_link(respx_mock, tmp_path):
     mock_fields(respx_mock)
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/52").respond(json={"id": 52, "extra": {}})
-    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/52").respond(json={})
-    linker(tmp_path).link_spool(parse_loaded_spools(printer())[0], 52, "", update_weights=False)
-    assert set(json.loads(patch.calls[0].request.content)) == {"extra"}
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/52").respond(json=SPOOL_52)
+    spool_patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/52").respond(json={})
+    filament_patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/filament/49").respond(json={})
+    make_bridge(tmp_path, printer(), auto_create=False).bridge.link_spool(loaded_spool(), 52, set())
+    assert set(json.loads(spool_patch.calls[0].request.content)) == {"extra"}
+    assert not filament_patch.called
 
 
 @respx.mock(assert_all_called=False)
@@ -524,37 +595,20 @@ def test_link_refuses_a_spool_linked_to_another_instance(respx_mock, tmp_path):
     mock_fields(respx_mock)
     respx_mock.get(f"{SPOOLMAN}/api/v1/spool/52").respond(json={"id": 52, "extra": {"opt_instance_uuid": json.dumps("other")}})
     with pytest.raises(Exception, match="already linked"):
-        linker(tmp_path).link_spool(parse_loaded_spools(printer())[0], 52, "", update_weights=False)
+        make_bridge(tmp_path, printer(), auto_create=False).bridge.link_spool(loaded_spool(), 52, set())
     assert writes(respx_mock) == []
 
 
-def test_link_candidates_put_matches_first_and_skip_linked_and_archived():
-    def spool(id, vendor, material, color, **extra):
-        return {"id": id, "remaining_weight": 500, "filament": {"name": "x", "material": material, "color_hex": color, "vendor": {"name": vendor}}, **extra}
-
-    spools = [
-        spool(1, "eSun", "PLA", "FF0000"),
-        spool(2, "Prusament", "PLA", "FF0000"),
-        spool(3, "prusament", "PC", "24292A"),
-        spool(4, "Prusament", "PC", "212929", archived=True),
-        spool(5, "Prusament", "PC", "212929", extra={"opt_instance_uuid": json.dumps("taken")}),
-    ]
-    ranked = rank_spools_for_link(parse_loaded_spools(printer())[0], spools)
-    assert [s["id"] for s in ranked] == [3, 2, 1]
-    assert [s["suggested"] for s in ranked] == [True, True, False]
-
-
-def test_best_match_uses_name_and_explains_why():
-    def spool(id, vendor, name, material, color):
-        return {"id": id, "remaining_weight": 1000, "initial_weight": 1000, "spool_weight": 186, "used_weight": 0, "filament": {"name": name, "material": material, "color_hex": color, "vendor": {"name": vendor}}}
-
-    spools = [spool(53, "Prusament", "Blend Natural", "PC", "EEEEEE"), spool(52, "Prusament", "Blend Jet Black", "PC", "24292A"), spool(1, "eSun", "Blend Jet Black", "PC", "24292A")]
-    ranked = rank_spools_for_link(parse_loaded_spools(printer())[0], spools)
-    assert ranked[0]["id"] == 52 and ranked[0]["best"] is True
-    assert ranked[0]["reasons"] == ["same vendor", "same material", "similar name", "similar color"]
-    assert [c["best"] for c in ranked[1:]] == [False, False]
-
-
-def test_no_best_match_without_the_same_vendor_and_material():
-    spools = [{"id": 1, "filament": {"name": "PC Blend Jet Black", "material": "PLA", "color_hex": "212929", "vendor": {"name": "eSun"}}}]
-    assert rank_spools_for_link(parse_loaded_spools(printer())[0], spools)[0]["best"] is False
+@respx.mock(assert_all_called=False)
+def test_unlink_keeps_other_extras_and_notices_if_the_link_stays(respx_mock, tmp_path):
+    linked = {"id": 52, "extra": {"card_uids": json.dumps("ABC"), "opt_instance_uuid": json.dumps(UUID)}}
+    unlinked = {"id": 52, "extra": {"card_uids": json.dumps("ABC")}}
+    route = respx_mock.get(f"{SPOOLMAN}/api/v1/spool/52")
+    route.side_effect = [httpx.Response(200, json=linked), httpx.Response(200, json=unlinked)]
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/52").respond(json={})
+    bridge = make_bridge(tmp_path, printer(), auto_create=False).bridge
+    bridge.unlink_spool(52)
+    assert json.loads(patch.calls[0].request.content) == {"extra": {"card_uids": json.dumps("ABC")}}
+    route.side_effect = [httpx.Response(200, json=linked), httpx.Response(200, json=linked)]
+    with pytest.raises(Exception, match="kept the link"):
+        bridge.unlink_spool(52)
