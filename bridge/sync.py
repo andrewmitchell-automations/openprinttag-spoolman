@@ -308,6 +308,8 @@ class Bridge:
         self.auto_create = auto_create
         self.fields_ready = False
         self._warned_unlinked: set[str] = set()
+        self._placed: dict[str, set[str]] = {}
+        self._warned_moved: set[str] = set()
 
     def poll(self, printer_config: PrinterConfig) -> dict:
         printer = self.connect.fetch_printer(printer_config.organization_id, printer_config.uuid)
@@ -315,10 +317,15 @@ class Bridge:
         log.info("Printer %s is %s with %d spool(s) loaded", printer.get("name"), printer.get("state"), len(loaded))
         self._ensure_extra_fields()
         spools = index_spools(self.spoolman.list_spools())
+        # A spool that was taken out gets its location set again the next time it is loaded.
+        placed = self._placed.setdefault(printer_config.uuid, set())
+        taken_out = placed - {spool.uuid for spool in loaded}
+        placed -= taken_out
+        self._warned_moved -= taken_out
         tools = []
         for spool in loaded:
             matched = spools.get(spool.uuid)
-            spool_id = self._sync_spool(spool, matched, printer_config.location)
+            spool_id = self._sync_spool(spool, matched, printer_config.location, placed)
             tools.append({"spool": spool, "spool_id": spool_id})
         return {"name": printer.get("name"), "state": printer.get("state"), "tools": tools, "time": time.time()}
 
@@ -331,7 +338,7 @@ class Bridge:
             self.spoolman.create_extra_field("filament", FILAMENT_UUID_FIELD, "OpenPrintTag material UUID")
         self.fields_ready = not self.spoolman.dry_run
 
-    def _sync_spool(self, loaded: LoadedSpool, spool: dict | None, location: str) -> int | None:
+    def _sync_spool(self, loaded: LoadedSpool, spool: dict | None, location: str, placed: set[str]) -> int | None:
         log.info(
             "Tool %s: %s %s, instance %s, actual %s g, consumed %s g, NFC %s",
             loaded.tool_id, loaded.brand, loaded.material_name, loaded.uuid,
@@ -348,10 +355,23 @@ class Bridge:
         log.info("Instance %s is Spoolman spool %s", loaded.uuid, spool["id"])
         if spool.get("archived"):
             log.warning("Spool %s is archived in Spoolman but loaded in the printer", spool["id"])
-        if location and spool.get("location") != location:
-            self.spoolman.update_spool(spool["id"], {"location": location})
+        self._sync_location(loaded, spool, location, placed)
         self._sync_consumption(loaded, spool["id"])
         return spool["id"]
+
+    def _sync_location(self, loaded: LoadedSpool, spool: dict, location: str, placed: set[str]) -> None:
+        """Set the location once per load, so the bridge never fights over it with something else that writes it."""
+        if not location or spool.get("location") == location:
+            return
+        if loaded.uuid not in placed:
+            self.spoolman.update_spool(spool["id"], {"location": location})
+            placed.add(loaded.uuid)
+        elif loaded.uuid not in self._warned_moved:
+            self._warned_moved.add(loaded.uuid)
+            log.warning(
+                "Spool %s moved to %r after the bridge set it to %r. Leaving it there. If this was not you, check that only one bridge is running.",
+                spool["id"], spool.get("location"), location,
+            )
 
     def _sync_consumption(self, loaded: LoadedSpool, spool_id: int) -> None:
         if loaded.consumed_weight is None:

@@ -10,7 +10,7 @@ import respx
 
 from bridge.config import ConfigError, PrinterConfig, Settings, load_settings, update_config
 from bridge.connect import ConnectAuthError, ConnectClient, TokenStore, Tokens, jwt_expiry, parse_login_json
-from bridge.spoolman import SpoolmanClient, extra_value, tls_verify
+from bridge.spoolman import SpoolmanClient, SpoolmanError, extra_value, tls_verify
 from bridge.sync import (
     Bridge,
     State,
@@ -280,6 +280,55 @@ def test_location_update_does_not_send_extra_fields(respx_mock, tmp_path):
     patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").respond(json={})
     make_bridge(tmp_path, printer()).poll()
     assert json.loads(patch.calls[0].request.content) == {"location": "Core One"}
+
+
+@respx.mock(assert_all_called=False)
+def test_location_is_not_written_when_it_already_matches(respx_mock, tmp_path):
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool()])
+    poller = make_bridge(tmp_path, printer())
+    poller.poll()
+    poller.poll()
+    assert writes(respx_mock) == []
+
+
+@respx.mock(assert_all_called=False)
+def test_location_is_set_once_when_something_else_keeps_changing_it(respx_mock, tmp_path, caplog):
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool(location="Another bridge")])
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").respond(json={})
+    poller = make_bridge(tmp_path, printer())
+    for _ in range(3):
+        poller.poll()
+    assert patch.call_count == 1
+    assert sum("only one bridge" in r.message for r in caplog.records) == 1
+
+
+@respx.mock(assert_all_called=False)
+def test_location_is_set_again_when_the_spool_is_loaded_again(respx_mock, tmp_path):
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool(location="Shelf")])
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").respond(json={})
+    poller = make_bridge(tmp_path, printer())
+    poller.poll()
+    poller.bridge.connect.data = {**printer(), "fff": {"tools": []}}
+    poller.poll()
+    poller.bridge.connect.data = printer()
+    poller.poll()
+    assert patch.call_count == 2
+
+
+@respx.mock(assert_all_called=False)
+def test_a_failed_location_write_is_tried_again(respx_mock, tmp_path):
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool(location="Shelf")])
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42")
+    patch.side_effect = [httpx.Response(500), httpx.Response(200, json={})]
+    poller = make_bridge(tmp_path, printer())
+    with pytest.raises(SpoolmanError):
+        poller.poll()
+    poller.poll()
+    assert patch.call_count == 2
 
 
 @respx.mock(assert_all_called=False)
