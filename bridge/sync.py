@@ -187,6 +187,7 @@ def score_spool(loaded: LoadedSpool, spool: dict, other_locations: tuple[str, ..
     return {
         "id": spool["id"],
         "label": f"#{spool['id']} {vendor} {filament.get('name') or ''} ({material}, {round(remaining or 0)} g)".replace("  ", " "),
+        "color": f"#{color}" if color else "",
         "score": score,
         "confidence": confidence,
         "reasons": reasons,

@@ -75,9 +75,10 @@
               <input type="radio" name="choice" value="other" required>
               <span>
                 <span class="choice-name">Another spool</span>
+                <input type="search" data-spool-filter placeholder="Search by ID, name, brand or color" aria-label="Search for a spool" autocomplete="off" hidden>
                 <select name="other_spool" aria-label="Another spool">
                   <option value="">Choose a spool</option>
-                  {% for c in tool.candidates %}<option value="{{ c.id }}">{{ c.label }}</option>{% endfor %}
+                  {% for c in tool.candidates|sort(attribute='id') %}<option value="{{ c.id }}" data-search="{{ c.label }} {{ c.color }}">{{ c.label }}</option>{% endfor %}
                 </select>
               </span>
             </label>

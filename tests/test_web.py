@@ -472,3 +472,17 @@ def test_a_custom_tag_spool_can_be_linked_but_not_created(respx_mock, tmp_path):
     body = json.loads(patch.calls[0].request.content)
     assert set(body) == {"extra"}
     assert json.loads(body["extra"]["opt_instance_uuid"]) == "custom"
+
+
+@respx.mock(assert_all_called=False)
+def test_another_spool_list_is_sorted_by_id_and_searchable(respx_mock, tmp_path):
+    spools = [
+        {"id": 7, "remaining_weight": 1, "filament": {"name": "Pink", "material": "PLA", "color_hex": "ff6762", "vendor": {"name": "eSun"}}, "extra": {}},
+        {"id": 52, "remaining_weight": 2, "filament": {"name": "Black", "material": "PC", "vendor": {"name": "Prusament"}}, "extra": {}},
+        {"id": 3, "remaining_weight": 3, "filament": {"name": "Blue", "material": "PETG", "color_hex": "0000FF", "vendor": {"name": "Polymaker"}}, "extra": {}},
+    ]
+    page = signed_in(unlinked_service(respx_mock, tmp_path, spools=spools)).get("/").text
+    listed = page[page.index('name="other_spool"'):page.index("</select>")]
+    assert re.findall(r'<option value="(\d+)"', listed) == ["3", "7", "52"]
+    assert 'data-search="#7 eSun Pink (PLA, 1 g) #FF6762"' in listed
+    assert "data-spool-filter" in page
