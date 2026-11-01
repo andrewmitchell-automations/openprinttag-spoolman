@@ -1,8 +1,10 @@
-# OpenPrintTag Spoolman
+# OpenPrintTag Spoolman for Prusa Connect
 
 [![Tests](https://github.com/mathiasbk/openprinttag-spoolman/actions/workflows/tests.yml/badge.svg)](https://github.com/mathiasbk/openprinttag-spoolman/actions/workflows/tests.yml)
 
-Keeps [Spoolman](https://github.com/Donkie/Spoolman) up to date with the spools loaded in your Prusa printers. The bridge reads each loaded spool's OpenPrintTag data from Prusa Connect, links it to a Spoolman spool and records what the printer consumes.
+Sync OpenPrintTag spool data and filament usage from Prusa Connect to Spoolman.
+
+The bridge reads each loaded spool's OpenPrintTag data from Prusa Connect, links it to a [Spoolman](https://github.com/Donkie/Spoolman) spool and records what the printer consumes.
 
 **This is an unofficial project, not affiliated with Prusa Research or Spoolman.** It uses the same undocumented API as the Prusa Connect web app, which can change or stop working at any time.
 

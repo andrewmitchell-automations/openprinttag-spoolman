@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}OpenPrintTag Spoolman{% endblock %}</title>
+  <title>{% block title %}OpenPrintTag Spoolman for Prusa Connect{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
   {% block head %}{% endblock %}
@@ -13,7 +13,7 @@
   <p class="test-band">Dry run: the bridge shows what it would do, but writes nothing to Spoolman.</p>
   {% endif %}
   <header class="top">
-    <a class="brand" href="{{ url_for('dashboard') }}">OpenPrintTag Spoolman</a>
+    <a class="brand" href="{{ url_for('dashboard') }}">OpenPrintTag Spoolman for Prusa Connect</a>
     {% if signed_in %}
     <nav>
       <a href="{{ url_for('dashboard') }}">Dashboard</a>
