@@ -9,13 +9,14 @@ import pytest
 import respx
 
 from bridge.config import ConfigError, PrinterConfig, Settings, load_settings, update_config
-from bridge.connect import ConnectAuthError, ConnectClient, TokenStore, Tokens, jwt_expiry, parse_login_json
+from bridge.connect import ConnectAuthError, ConnectClient, ConnectError, TokenStore, Tokens, jwt_expiry, parse_login_json
 from bridge.spoolman import SpoolmanClient, SpoolmanError, extra_value, tls_verify
 from bridge.sync import (
     Bridge,
     State,
     color_hex,
     consumption_step,
+    fill_from_warehouse,
     index_spools,
     parse_loaded_spools,
     build_link_changes,
@@ -90,11 +91,17 @@ def printer(consumed=0, uuid=UUID, from_nfc=True):
 
 
 class FakeConnect:
-    def __init__(self, data):
+    def __init__(self, data, warehouse=()):
         self.data = data
+        self.warehouse = warehouse
 
     def fetch_printer(self, organization_id, printer_uuid):
         return self.data
+
+    def warehouse_items(self, organization_id):
+        if isinstance(self.warehouse, Exception):
+            raise self.warehouse
+        return self.warehouse
 
 
 def existing_spool(location="Core One", extra=None):
@@ -718,3 +725,102 @@ def test_a_stale_link_can_only_be_replaced_without_nfc():
     linked = {**SPOOL_52, "extra": {"opt_instance_uuid": json.dumps("old-load")}}
     assert [c["id"] for c in rank_spools_for_link(custom, [linked], loaded_now={"custom"})] == [52]
     assert rank_spools_for_link(tagged, [linked], loaded_now={UUID}) == []
+
+
+# Spools from the Warehouse in the Prusa app
+
+
+def warehouse_spool_printer(consumed=6):
+    data = custom_tag_printer(consumed=consumed)
+    instance = data["fff"]["tools"][0]["materialPackageInstance"]
+    instance["isFromNfc"] = True
+    return data
+
+
+WAREHOUSE_ITEM = {
+    "name": "PETG-GF Black",
+    "consumedWeight": 6,
+    "nominalNettoFullWeight": 1000,
+    "materialPackageInstance": {
+        "uuid": "custom",
+        "actualNettoFullWeight": None,
+        "package": {
+            "filamentDiameter": 1.75,
+            "container": {"emptyWeight": 220},
+            "material": {
+                "uuid": MATERIAL_UUID,
+                "type": "PETG",
+                "primaryColor": {"colorRgba": "#101010"},
+                "properties": {"density": 1.35},
+                "brand": {"name": "ELEGOO"},
+            },
+        },
+    },
+}
+
+
+def test_warehouse_details_fill_only_what_the_tool_did_not_report():
+    loaded = parse_loaded_spools(warehouse_spool_printer())[0]
+    filled = fill_from_warehouse(loaded, WAREHOUSE_ITEM)
+    assert filled.display_name == "ELEGOO PETG-GF Black"
+    assert (filled.empty_weight, filled.density, filled.material_type) == (220, 1.35, "PETG")
+    assert filled.can_create is True
+    other = {**WAREHOUSE_ITEM, "consumedWeight": 99}
+    assert fill_from_warehouse(loaded, other).consumed_weight == 6
+
+
+def test_a_warehouse_spool_uses_the_nominal_weight_as_its_full_weight():
+    loaded = parse_loaded_spools(warehouse_spool_printer(consumed=250))[0]
+    assert loaded.actual_weight is None
+    assert loaded.full_weight == 1000
+    assert loaded.remaining_fraction == 0.75
+
+
+def test_a_nominal_weight_does_not_replace_spoolmans_weight_by_default():
+    loaded = parse_loaded_spools(warehouse_spool_printer())[0]
+    spool = {"id": 55, "initial_weight": 1010, "filament": {}, "extra": {}}
+    change = next(c for c in build_link_changes(loaded, spool, 0) if c["key"] == "spool_initial_weight")
+    assert (change["after"], change["checked"]) == (1000, False)
+
+
+@respx.mock(assert_all_called=False)
+def test_poll_adds_warehouse_details_to_a_loaded_spool(respx_mock, tmp_path):
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[{"id": 55, "location": "Core One", "extra": {"opt_instance_uuid": json.dumps("custom")}}])
+    poller = make_bridge(tmp_path, warehouse_spool_printer())
+    poller.bridge.connect.warehouse = [WAREHOUSE_ITEM, {"name": "Other", "materialPackageInstance": None}]
+    assert poller.poll()["tools"][0]["spool"].display_name == "ELEGOO PETG-GF Black"
+
+
+@respx.mock(assert_all_called=False)
+def test_consumption_is_still_tracked_when_the_warehouse_cannot_be_read(respx_mock, tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({"consumed": {"custom": 3}}))
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[{"id": 55, "location": "Core One", "extra": {"opt_instance_uuid": json.dumps("custom")}}])
+    use = respx_mock.put(f"{SPOOLMAN}/api/v1/spool/55/use").respond(json={})
+    poller = make_bridge(tmp_path, warehouse_spool_printer(consumed=8))
+    poller.bridge.connect.warehouse = ConnectError("no warehouse")
+    assert poller.poll()["tools"][0]["spool"].brand is None
+    assert json.loads(use.calls[0].request.content) == {"use_weight": 5}
+
+
+def test_a_spool_with_full_tag_data_does_not_read_the_warehouse():
+    connect = FakeConnect(printer(), warehouse=AssertionError("should not be read"))
+    bridge = Bridge(connect, None, None)
+    assert bridge._with_warehouse_details(parse_loaded_spools(printer()), "org-1")[0].brand == "Prusament"
+
+
+@respx.mock(assert_all_called=False)
+def test_warehouse_items_follows_every_page(respx_mock, tmp_path):
+    s = settings(tmp_path)
+    store = TokenStore(tmp_path / "tokens.json")
+    store.save(Tokens(make_jwt(time.time() + 3600), "refresh"))
+    pages = [
+        {"pageInfo": {"hasNextPage": True, "endCursor": "next"}, "nodes": [{"name": "A"}]},
+        {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [{"name": "B"}]},
+    ]
+    route = respx_mock.post(GRAPHQL)
+    route.side_effect = [httpx.Response(200, json={"data": {"warehouse": {"items": page}}}) for page in pages]
+    items = ConnectClient(s, store, httpx.Client()).warehouse_items("org-1")
+    assert [item["name"] for item in items] == ["A", "B"]
+    assert json.loads(route.calls[1].request.content)["variables"]["after"] == "next"

@@ -460,6 +460,7 @@ def test_a_custom_tag_spool_can_be_linked_but_not_created(respx_mock, tmp_path):
     client = signed_in(service)
     page = client.get("/").text
     assert "Unknown brand PETG" in page
+    assert "Nominal weight" in page
     assert "#55 ELEGOO petg-gf" in page
     assert "Not confirmed by Connect" in page
     assert 'value="new"' not in page

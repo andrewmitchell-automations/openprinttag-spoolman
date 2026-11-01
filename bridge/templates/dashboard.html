@@ -43,7 +43,11 @@
       <h3>{{ spool.display_name }}</h3>
       <dl>
         <div><dt>Tool</dt><dd>{{ spool.tool_id }}</dd></div>
+        {% if spool.actual_weight is none and spool.nominal_weight is not none %}
+        <div><dt>Nominal weight</dt><dd>{{ spool.nominal_weight|grams }}</dd></div>
+        {% else %}
         <div><dt>Actual weight</dt><dd>{{ spool.actual_weight|grams }}</dd></div>
+        {% endif %}
         <div><dt>Consumed</dt><dd>{{ spool.consumed_weight|grams }}</dd></div>
         <div><dt>Empty spool</dt><dd>{{ spool.empty_weight|grams }}</dd></div>
         <div><dt>Read from</dt><dd>{{ 'NFC tag' if spool.is_from_nfc else 'Not confirmed by Connect' }}</dd></div>

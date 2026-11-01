@@ -84,6 +84,39 @@ query BridgePrinter($organizationId: UUID!, $printerId: UUID!) {
 }
 """
 
+# A spool from the Warehouse in the Prusa app has little data on the tool, but its full data is here.
+WAREHOUSE_QUERY = """
+query BridgeWarehouse($organizationId: String!, $first: Int, $after: String) {
+  warehouse {
+    items(organizationId: $organizationId, first: $first, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        name
+        consumedWeight
+        nominalNettoFullWeight
+        materialPackageInstance {
+          uuid
+          actualNettoFullWeight
+          package {
+            filamentDiameter
+            container { emptyWeight }
+            material {
+              uuid
+              type
+              primaryColor { colorRgba }
+              properties { density }
+              brand { name }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+WAREHOUSE_PAGE_SIZE = 100
+WAREHOUSE_MAX_PAGES = 10
+
 
 class ConnectAuthError(Exception):
     """The login has failed and needs to be done again."""
@@ -282,3 +315,16 @@ class ConnectClient:
             detail = (printer or {}).get("message") or (printer or {}).get("__typename")
             raise ConnectError(f"Printer query failed: {detail}")
         return printer
+
+    def warehouse_items(self, organization_id: str) -> list[dict]:
+        items = []
+        after = None
+        for _ in range(WAREHOUSE_MAX_PAGES):
+            data = self._query(WAREHOUSE_QUERY, {"organizationId": organization_id, "first": WAREHOUSE_PAGE_SIZE, "after": after})
+            page = (data.get("warehouse") or {}).get("items") or {}
+            items.extend(page.get("nodes") or [])
+            info = page.get("pageInfo") or {}
+            if not info.get("hasNextPage"):
+                break
+            after = info.get("endCursor")
+        return items

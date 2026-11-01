@@ -4,11 +4,12 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from pathlib import Path
 
 from .config import PrinterConfig
+from .connect import ConnectError
 from .spoolman import SpoolmanClient, SpoolmanError, encode_extra, extra_value
 
 log = logging.getLogger(__name__)
@@ -47,11 +48,20 @@ class LoadedSpool:
         return all(v is not None for v in (self.brand, self.material_name, self.density, self.filament_diameter))
 
     @property
+    def full_weight(self) -> float | None:
+        """A spool from the Warehouse has no measured weight, only the nominal one."""
+        return self.actual_weight if self.actual_weight is not None else self.nominal_weight
+
+    @property
     def remaining_fraction(self) -> float:
         full = self.nominal_weight or self.actual_weight or 0
-        if not full or self.actual_weight is None:
+        if not full or self.full_weight is None:
             return 0.0
-        return max(0.0, min(1.0, (self.actual_weight - (self.consumed_weight or 0)) / full))
+        return max(0.0, min(1.0, (self.full_weight - (self.consumed_weight or 0)) / full))
+
+    @property
+    def is_missing_details(self) -> bool:
+        return any(v is None for v in (self.brand, self.material_name, self.density, self.empty_weight))
 
 
 def color_hex(rgba: str | None) -> str | None:
@@ -96,6 +106,27 @@ def parse_loaded_spools(printer: dict) -> list[LoadedSpool]:
             )
         )
     return spools
+
+
+def fill_from_warehouse(loaded: LoadedSpool, item: dict) -> LoadedSpool:
+    """Adds what the tool did not report. What the tool did report is kept."""
+    instance = item.get("materialPackageInstance") or {}
+    package = instance.get("package") or {}
+    material = package.get("material") or {}
+    found = {
+        "actual_weight": instance.get("actualNettoFullWeight"),
+        "consumed_weight": item.get("consumedWeight"),
+        "nominal_weight": item.get("nominalNettoFullWeight"),
+        "empty_weight": (package.get("container") or {}).get("emptyWeight"),
+        "filament_diameter": package.get("filamentDiameter"),
+        "material_uuid": material.get("uuid"),
+        "material_name": item.get("name"),
+        "material_type": material.get("type"),
+        "brand": (material.get("brand") or {}).get("name"),
+        "color_hex": color_hex((material.get("primaryColor") or {}).get("colorRgba")),
+        "density": (material.get("properties") or {}).get("density"),
+    }
+    return replace(loaded, **{field: value for field, value in found.items() if getattr(loaded, field) is None})
 
 
 def consumption_step(previous: float | None, current: float) -> tuple[str, float]:
@@ -171,8 +202,8 @@ def score_spool(loaded: LoadedSpool, spool: dict, other_locations: tuple[str, ..
         score += 5
         reasons.append("Same nominal weight")
     remaining = spool.get("remaining_weight")
-    if remaining is not None and loaded.actual_weight is not None:
-        if abs(remaining - (loaded.actual_weight - (loaded.consumed_weight or 0))) <= 50:
+    if remaining is not None and loaded.full_weight is not None:
+        if abs(remaining - (loaded.full_weight - (loaded.consumed_weight or 0))) <= 50:
             score += 5
             reasons.append("Remaining weight is close")
     if spool.get("location") and spool["location"] in other_locations:
@@ -230,7 +261,7 @@ def build_link_changes(loaded: LoadedSpool, spool: dict, shared: int) -> list[di
     filament_on = shared == 0 and loaded.is_from_nfc
     rows = [
         ("spool_instance", "spool", SPOOL_UUID_FIELD, "Link to this tag", extra_value(spool, SPOOL_UUID_FIELD), loaded.uuid, True),
-        ("spool_initial_weight", "spool", "initial_weight", "Spool: filament weight", spool.get("initial_weight"), loaded.actual_weight, True),
+        ("spool_initial_weight", "spool", "initial_weight", "Spool: filament weight", spool.get("initial_weight"), loaded.full_weight, loaded.actual_weight is not None),
         ("spool_spool_weight", "spool", "spool_weight", "Spool: empty weight", spool.get("spool_weight"), loaded.empty_weight, True),
         ("spool_used_weight", "spool", "used_weight", "Spool: consumed", spool.get("used_weight"), loaded.consumed_weight, True),
         ("filament_name", "filament", "name", "Filament: name", filament.get("name"), loaded.material_name, filament_on),
@@ -314,7 +345,7 @@ class Bridge:
 
     def poll(self, printer_config: PrinterConfig) -> dict:
         printer = self.connect.fetch_printer(printer_config.organization_id, printer_config.uuid)
-        loaded = parse_loaded_spools(printer)
+        loaded = self._with_warehouse_details(parse_loaded_spools(printer), printer_config.organization_id)
         log.info("Printer %s is %s with %d spool(s) loaded", printer.get("name"), printer.get("state"), len(loaded))
         self._ensure_extra_fields()
         spools = index_spools(self.spoolman.list_spools())
@@ -329,6 +360,18 @@ class Bridge:
             spool_id = self._sync_spool(spool, matched, printer_config.location, placed)
             tools.append({"spool": spool, "spool_id": spool_id})
         return {"name": printer.get("name"), "state": printer.get("state"), "tools": tools, "time": time.time()}
+
+    def _with_warehouse_details(self, loaded: list[LoadedSpool], organization_id: str) -> list[LoadedSpool]:
+        if not any(spool.is_missing_details for spool in loaded):
+            return loaded
+        try:
+            items = self.connect.warehouse_items(organization_id)
+        except ConnectError as e:
+            # Consumption can still be tracked without these details.
+            log.warning("Could not read the Connect warehouse: %s", e)
+            return loaded
+        by_uuid = {(item.get("materialPackageInstance") or {}).get("uuid"): item for item in items}
+        return [fill_from_warehouse(spool, by_uuid[spool.uuid]) if spool.uuid in by_uuid else spool for spool in loaded]
 
     def _ensure_extra_fields(self) -> None:
         if self.fields_ready:
@@ -458,7 +501,7 @@ class Bridge:
         created = self.spoolman.create_spool(
             {
                 "filament_id": filament_id,
-                "initial_weight": loaded.actual_weight,
+                "initial_weight": loaded.full_weight,
                 "spool_weight": loaded.empty_weight,
                 # Filament used before the spool reached Spoolman, so remaining weight is right.
                 "used_weight": consumed,
