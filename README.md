@@ -53,6 +53,10 @@ In a dry run you can go through the same steps, and confirming shows the exact A
 
 Set `AUTO_CREATE` or turn it on in the settings to create unknown spools without asking.
 
+### Writing your own tags
+
+A tag written from the material form in the Prusa app can make a Core One say "The OpenPrintTag does not allow filament usage tracking". To avoid this, add the spool to Warehouse in the Prusa app and write that warehouse spool to the tag.
+
 ## Consumption
 
 | Consumption from Connect | What the bridge does |
