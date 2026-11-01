@@ -106,7 +106,8 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 |---|---|
 | ![Suggested matches for an unlinked spool](docs/screenshots/link-suggestion.png) | ![Reviewing a link before confirming](docs/screenshots/link-confirm.png) |
 | ![Setting up the Connect login](docs/screenshots/setup-connect.png) | ![Choosing printers](docs/screenshots/setup-printers.png) |
-| ![Choosing how the bridge runs](docs/screenshots/setup-operation.png) | ![The dashboard on a phone in dark mode](docs/screenshots/dashboard-mobile-dark.png) |
+| ![Choosing how the bridge runs](docs/screenshots/setup-operation.png) | ![The dashboard in dark mode](docs/screenshots/dashboard-dark.png) |
+| ![The dashboard on a phone](docs/screenshots/dashboard-mobile.png) | ![The dashboard on a phone in dark mode](docs/screenshots/dashboard-mobile-dark.png) |
 
 ## Development
 
