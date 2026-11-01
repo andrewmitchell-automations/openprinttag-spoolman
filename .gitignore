@@ -1,0 +1,8 @@
+.env
+data/
+certs/
+research/
+tokens.json
+__pycache__/
+.pytest_cache/
+.venv/

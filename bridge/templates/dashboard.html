@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block head %}{% if not needs_choice %}<meta http-equiv="refresh" content="60">{% endif %}{% endblock %}
+
+{% macro spool_graphic(spool) %}
+{% set radius = 22 + 34 * spool.remaining_fraction %}
+<svg class="spool" viewBox="0 0 120 120" role="img" aria-label="Spool with {{ (spool.remaining_fraction * 100)|round|int }} percent left">
+  <circle class="flange" cx="60" cy="60" r="58"></circle>
+  <circle cx="60" cy="60" r="{{ radius }}" fill="#{{ spool.color_hex or '8A97A3' }}"></circle>
+  <circle class="hub" cx="60" cy="60" r="20"></circle>
+  <circle class="bore" cx="60" cy="60" r="9"></circle>
+</svg>
+{% endmacro %}
+
+{% block main %}
+{% for problem in problems %}<p class="notice error">{{ problem }}</p>{% endfor %}
+
+{% if token.error %}
+<p class="notice error">The Connect login no longer works. <a href="{{ url_for('setup', step='connect') }}">Log in again</a>.</p>
+{% elif not token.has_refresh %}
+<p class="notice error">There is no refresh token, so the bridge stops when the login expires in {{ token.expires|until }}. <a href="{{ url_for('setup', step='connect') }}">Log in again</a>.</p>
+{% endif %}
+
+<div class="heading-row">
+  <h1>Printers</h1>
+  <form method="post" action="{{ url_for('poll_now') }}"><button class="quiet">Poll now</button></form>
+</div>
+
+{% for printer in printers %}
+<section class="printer">
+  <h2>{{ printer.name or printer.config.name or printer.config.uuid }}</h2>
+  <p class="meta">
+    {% if printer.state %}<span class="state state-{{ printer.state|lower }}">{{ printer.state|capitalize }}</span>{% endif %}
+    {% if printer.time %}Last read {{ printer.time|clock }}{% else %}Waiting for the first poll{% endif %}{% if printer.config.location %}, location {{ printer.config.location }}{% endif %}
+  </p>
+  {% if printer.error %}<p class="notice error">{{ printer.error }}</p>{% endif %}
+
+  {% for tool in printer.tools %}
+  {% set spool = tool.spool %}
+  <article class="tool">
+    {{ spool_graphic(spool) }}
+    <div class="tool-body">
+      <h3>{{ spool.brand or 'Unknown brand' }} {{ spool.material_name or 'Unknown material' }}</h3>
+      <dl>
+        <div><dt>Tool</dt><dd>{{ spool.tool_id }}</dd></div>
+        <div><dt>Actual weight</dt><dd>{{ spool.actual_weight|grams }}</dd></div>
+        <div><dt>Consumed</dt><dd>{{ spool.consumed_weight|grams }}</dd></div>
+        <div><dt>Empty spool</dt><dd>{{ spool.empty_weight|grams }}</dd></div>
+        <div><dt>Read from</dt><dd>{{ 'NFC tag' if spool.is_from_nfc else 'Manual selection' }}</dd></div>
+      </dl>
+
+      {% if tool.url %}
+      <p>Linked to <a href="{{ tool.url }}">spool {{ tool.spool_id }} in Spoolman</a>.</p>
+      {% elif not spool.is_from_nfc %}
+      <p class="hint">This spool is not tracked, because it was not read from an NFC tag.</p>
+      {% else %}
+      <div class="unlinked">
+        <p><strong>This spool is not linked to Spoolman.</strong> Consumption is not recorded until you choose.</p>
+        {% if settings.dry_run %}<p class="hint">Turn off dry run in the <a href="{{ url_for('setup', step='mode') }}">settings</a> to link or create this spool.</p>{% endif %}
+        <form method="post" action="{{ url_for('link_spool') }}" class="stack">
+          <input type="hidden" name="uuid" value="{{ spool.uuid }}">
+          <label>Link to an existing spool
+            <select name="spool_id" required>
+              <option value="">Choose a spool</option>
+              {% set suggested = tool.candidates|selectattr('suggested')|list %}
+              {% if suggested %}
+              <optgroup label="Suggested">{% for c in suggested %}<option value="{{ c.id }}">{{ c.label }}</option>{% endfor %}</optgroup>
+              {% endif %}
+              <optgroup label="All spools">{% for c in tool.candidates|rejectattr('suggested') %}<option value="{{ c.id }}">{{ c.label }}</option>{% endfor %}</optgroup>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" name="update_weights" checked> Use the weights from the tag ({{ spool.actual_weight|grams }} filament, {{ spool.empty_weight|grams }} empty spool, {{ spool.consumed_weight|grams }} consumed)</label>
+          <button {{ 'disabled' if settings.dry_run }}>Link spool</button>
+        </form>
+        <form method="post" action="{{ url_for('create_spool') }}">
+          <input type="hidden" name="uuid" value="{{ spool.uuid }}">
+          <button class="quiet" {{ 'disabled' if settings.dry_run }}>Create new spool</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+  </article>
+  {% else %}
+  {% if printer.time %}<p>No spool is loaded.</p>{% endif %}
+  {% endfor %}
+
+  {% if printer.actions %}
+  <details class="actions">
+    <summary>Recent actions</summary>
+    <ul>{% for action in printer.actions|reverse %}<li>{{ action.time|clock }} {{ 'Would call' if action.dry_run else 'Called' }} <code>{{ action.text }}</code></li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+</section>
+{% else %}
+<p>No printers are selected. <a href="{{ url_for('setup', step='printers') }}">Choose printers</a>.</p>
+{% endfor %}
+{% endblock %}

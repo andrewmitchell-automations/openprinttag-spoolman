@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Log{% endblock %}
+{% block main %}
+<h1>Log</h1>
+<p class="lead">The latest 200 lines, newest first.</p>
+{% if lines %}
+<pre class="log">{% for line in lines %}{{ line }}
+{% endfor %}</pre>
+{% else %}
+<p>Nothing has been logged yet.</p>
+{% endif %}
+{% endblock %}

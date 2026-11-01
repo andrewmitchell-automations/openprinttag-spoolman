@@ -1,0 +1,14 @@
+services:
+  bridge:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WEB_PORT: ${WEB_PORT:-7913}
+    ports:
+      - "${WEB_PORT:-7913}:${WEB_PORT:-7913}"
+    volumes:
+      - ./data:/data:Z
+      - /etc/localtime:/etc/localtime:ro

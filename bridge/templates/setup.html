@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Setup{% endblock %}
+{% set labels = {'spoolman': 'Spoolman', 'connect': 'Prusa Connect', 'printers': 'Printers', 'mode': 'Operation'} %}
+{% block main %}
+<ol class="steps">
+  {% for s in steps %}
+  <li {% if s == step %}aria-current="step"{% endif %}><a href="{{ url_for('setup', step=s) }}">{{ labels[s] }}</a></li>
+  {% endfor %}
+</ol>
+
+{% if step == 'spoolman' %}
+<h1>Connect to Spoolman</h1>
+<form method="post" enctype="multipart/form-data" class="stack">
+  <label>Spoolman address
+    <input name="spoolman_url" type="url" required placeholder="http://server:7912" value="{{ form.get('spoolman_url', settings.spoolman_url) }}">
+  </label>
+  <details {% if settings.spoolman_url.startswith('https') %}open{% endif %}>
+    <summary>Using HTTPS with your own CA?</summary>
+    <label>Root certificate (PEM)
+      <input name="ca_file" type="file" accept=".crt,.pem">
+    </label>
+    {% if settings.spoolman_ca_bundle %}<p class="hint">Currently using {{ settings.spoolman_ca_bundle }}.</p>{% endif %}
+    <p class="hint">With Caddy in Docker, get it like this: <code>docker cp caddy:/data/caddy/pki/authorities/local/root.crt .</code></p>
+  </details>
+  {% if test %}<p class="notice ok" role="status">{{ test }}</p>{% endif %}
+  <div class="buttons">
+    <button name="action" value="save">Save and continue</button>
+    <button name="action" value="test" class="quiet">Test connection</button>
+  </div>
+</form>
+
+{% elif step == 'connect' %}
+<h1>Log in to Prusa Connect</h1>
+{% if token.logged_in %}
+<p class="notice {{ 'error' if token.error or not token.has_refresh else 'ok' }}">
+  {% if token.email %}Logged in as {{ token.email }}. {% else %}A login is stored. {% endif %}
+  {% if token.has_refresh %}Automatic renewal is on.{% else %}There is no refresh token, so the login stops working in {{ token.expires|until }}.{% endif %}
+</p>
+<p><a href="{{ url_for('setup', step='printers') }}">Continue</a> or log in again below.</p>
+{% endif %}
+<p class="lead">Prusa has no login for tools like this, so you copy it from your browser once.</p>
+<ol class="instructions">
+  <li>Open a <strong>private window</strong> and log in to <a href="https://connect.prusa3d.com" target="_blank" rel="noopener">connect.prusa3d.com</a>. A separate window gives the bridge its own session, so you are not logged out elsewhere.</li>
+  <li>Press F12, open the console and run this line. If the console warns about pasting, first type what it asks for.
+    <div class="copy">
+      <code id="console-line">{{ console_line }}</code>
+      <button type="button" class="quiet" data-copy="console-line">Copy</button>
+    </div>
+  </li>
+  <li>Paste the result below. It is never shown again.</li>
+  <li>Close the private window without logging out.</li>
+</ol>
+<form method="post" class="stack" autocomplete="off">
+  <label>Login from the console
+    <input name="login" type="password" required autocomplete="off" spellcheck="false">
+  </label>
+  <button>Log in</button>
+</form>
+
+{% elif step == 'printers' %}
+<h1>Choose printers</h1>
+{% if available %}
+<form method="post" class="stack">
+  {% for printer in available %}
+  {% set known_printer = known.get(printer.uuid) %}
+  <fieldset class="printer-choice">
+    <label class="check"><input type="checkbox" name="printer" value="{{ printer.uuid }}" {{ 'checked' if (known_printer and known_printer.enabled) or (not known and loop.length == 1) }}> {{ printer.name }} <span class="hint">{{ printer.organization_name }}</span></label>
+    <label>Location in Spoolman
+      <input name="location_{{ printer.uuid }}" maxlength="64" value="{{ known_printer.location if known_printer and known_printer.location else printer.name }}">
+    </label>
+  </fieldset>
+  {% endfor %}
+  <button>Save and continue</button>
+</form>
+{% else %}
+<p>No printers found. Check that you are <a href="{{ url_for('setup', step='connect') }}">logged in to Connect</a> with the right account.</p>
+{% endif %}
+
+{% elif step == 'mode' %}
+<h1>Choose how the bridge runs</h1>
+<form method="post" class="stack">
+  <label class="check"><input type="checkbox" name="dry_run" {{ 'checked' if settings.dry_run }}> Dry run</label>
+  <p class="hint">In a dry run the bridge reads everything and shows what it would do, but writes nothing to Spoolman. It remembers the consumption from the first poll, so when you turn dry run off, what was used in the meantime is deducted from linked spools too.</p>
+  <label class="check"><input type="checkbox" name="auto_create" {{ 'checked' if settings.auto_create }}> Create new spools automatically</label>
+  <p class="hint">Off: the dashboard asks whether an unknown spool should be linked to an existing one or created, which avoids duplicates. On: the bridge creates the spool right away.</p>
+  <label>Seconds between polls
+    <input name="poll_interval" type="number" min="10" value="{{ settings.poll_interval }}">
+  </label>
+  <button>Save</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}OpenPrintTag Spoolman{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  {% if signed_in and settings.dry_run %}
+  <p class="test-band">Dry run: the bridge shows what it would do, but writes nothing to Spoolman.</p>
+  {% endif %}
+  <header class="top">
+    <a class="brand" href="{{ url_for('dashboard') }}">OpenPrintTag Spoolman</a>
+    {% if signed_in %}
+    <nav>
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('logs') }}">Log</a>
+      <a href="{{ url_for('setup', step='spoolman') }}">Settings</a>
+      <form method="post" action="{{ url_for('logout') }}"><button class="link">Log out</button></form>
+    </nav>
+    {% endif %}
+  </header>
+  <main>
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+    <p class="notice {{ category }}" role="status">{{ message }}</p>
+    {% endfor %}
+    {% block main %}{% endblock %}
+  </main>
+</body>
+</html>
