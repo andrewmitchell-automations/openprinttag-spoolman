@@ -120,8 +120,14 @@ def _color_distance(a: str | None, b: str | None) -> float | None:
         return None
 
 
+def _name_matches(loaded_name: str | None, filament_name: str | None) -> bool:
+    """True if every word of the shorter name is in the longer one, like 'Blend Jet Black' and 'PC Blend Jet Black'."""
+    a, b = set((loaded_name or "").casefold().split()), set((filament_name or "").casefold().split())
+    return bool(a and b) and (a <= b or b <= a)
+
+
 def rank_spools_for_link(loaded: LoadedSpool, spools: list[dict]) -> list[dict]:
-    """Candidates for an unlinked spool, best guesses first: vendor, material, then color."""
+    """Candidates for an unlinked spool, best guesses first. Nothing is linked until the user confirms."""
     ranked = []
     for spool in spools:
         if spool.get("archived") or extra_value(spool, SPOOL_UUID_FIELD):
@@ -130,22 +136,40 @@ def rank_spools_for_link(loaded: LoadedSpool, spools: list[dict]) -> list[dict]:
         vendor = (filament.get("vendor") or {}).get("name") or ""
         material = filament.get("material") or ""
         score = 0
-        if loaded.brand and vendor.casefold() == loaded.brand.casefold():
+        reasons = []
+        same_vendor = bool(loaded.brand) and vendor.casefold() == loaded.brand.casefold()
+        same_material = bool(loaded.material_type) and material.casefold() == loaded.material_type.casefold()
+        if same_vendor:
             score += 4
-        if loaded.material_type and material.casefold() == loaded.material_type.casefold():
+            reasons.append("same vendor")
+        if same_material:
             score += 2
+            reasons.append("same material")
+        if _name_matches(loaded.material_name, filament.get("name")):
+            score += 3
+            reasons.append("similar name")
         distance = _color_distance(loaded.color_hex, (filament.get("color_hex") or "").upper()[:6])
         if distance is not None and distance < 0.1:
             score += 1
+            reasons.append("similar color")
         ranked.append(
             {
                 "id": spool["id"],
                 "label": f"#{spool['id']} {vendor} {filament.get('name') or ''} ({material}, {round(spool.get('remaining_weight') or 0)} g)".replace("  ", " "),
                 "suggested": score >= 4,
                 "score": score,
+                "reasons": reasons,
+                "strong": same_vendor and same_material,
+                "initial_weight": spool.get("initial_weight"),
+                "spool_weight": spool.get("spool_weight"),
+                "used_weight": spool.get("used_weight"),
+                "color_hex": (filament.get("color_hex") or "").upper()[:6] or None,
             }
         )
-    return sorted(ranked, key=lambda s: (-s["score"], s["id"]))
+    ranked.sort(key=lambda s: (-s["score"], s["id"]))
+    for position, candidate in enumerate(ranked):
+        candidate["best"] = position == 0 and candidate["strong"]
+    return ranked
 
 
 class State:

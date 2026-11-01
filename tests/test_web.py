@@ -232,6 +232,9 @@ def test_dashboard_offers_a_link_for_an_unlinked_spool(respx_mock, tmp_path):
     assert "not linked to Spoolman" in page
     assert "Suggested" in page
     assert "#52 Prusament Blend" in page
+    assert "Best match in Spoolman" in page
+    assert "Confirm and link" in page
+    assert "same vendor, same material" in page
 
 
 @respx.mock(assert_all_called=False)
@@ -270,3 +273,10 @@ def test_two_printers_are_both_polled(respx_mock, tmp_path):
     service.store.save(Tokens(make_jwt(time.time() + 3600), "r"))
     assert service.poll_once() is True
     assert set(service.status) == {"a", "c"}
+
+
+@respx.mock(assert_all_called=False)
+def test_a_suggestion_writes_nothing_until_it_is_confirmed(respx_mock, tmp_path):
+    service = unlinked_service(respx_mock, tmp_path, DRY_RUN="false")
+    signed_in(service).get("/")
+    assert [c.request.method for c in respx_mock.calls if "/spool" in str(c.request.url) and c.request.method != "GET"] == []

@@ -542,3 +542,19 @@ def test_link_candidates_put_matches_first_and_skip_linked_and_archived():
     ranked = rank_spools_for_link(parse_loaded_spools(printer())[0], spools)
     assert [s["id"] for s in ranked] == [3, 2, 1]
     assert [s["suggested"] for s in ranked] == [True, True, False]
+
+
+def test_best_match_uses_name_and_explains_why():
+    def spool(id, vendor, name, material, color):
+        return {"id": id, "remaining_weight": 1000, "initial_weight": 1000, "spool_weight": 186, "used_weight": 0, "filament": {"name": name, "material": material, "color_hex": color, "vendor": {"name": vendor}}}
+
+    spools = [spool(53, "Prusament", "Blend Natural", "PC", "EEEEEE"), spool(52, "Prusament", "Blend Jet Black", "PC", "24292A"), spool(1, "eSun", "Blend Jet Black", "PC", "24292A")]
+    ranked = rank_spools_for_link(parse_loaded_spools(printer())[0], spools)
+    assert ranked[0]["id"] == 52 and ranked[0]["best"] is True
+    assert ranked[0]["reasons"] == ["same vendor", "same material", "similar name", "similar color"]
+    assert [c["best"] for c in ranked[1:]] == [False, False]
+
+
+def test_no_best_match_without_the_same_vendor_and_material():
+    spools = [{"id": 1, "filament": {"name": "PC Blend Jet Black", "material": "PLA", "color_hex": "212929", "vendor": {"name": "eSun"}}}]
+    assert rank_spools_for_link(parse_loaded_spools(printer())[0], spools)[0]["best"] is False

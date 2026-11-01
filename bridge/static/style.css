@@ -137,6 +137,15 @@ dd { margin: 0; font-size: 1.125rem; font-variant-numeric: tabular-nums; }
 .unlinked > p { margin: 0 0 0.75rem; }
 .unlinked form { margin-top: 0.75rem; }
 
+.match { margin-bottom: 1rem; padding: 1rem; border-left: 4px solid var(--accent); background: var(--plate); }
+.match h4 { margin: 0; color: var(--muted); font: 600 0.875rem var(--body); }
+.match-name { margin: 0.25rem 0 0.5rem; font: 700 1.125rem var(--display); }
+.match form { margin-top: 0.75rem; }
+.compare { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.compare th, .compare td { padding: 0.3rem 0.75rem 0.3rem 0; border-bottom: 1px solid var(--line); text-align: left; font-weight: 400; }
+.compare thead th { color: var(--muted); font-size: 0.875rem; }
+.other-choices form { margin-top: 0.75rem; }
+
 .actions { margin-top: 1rem; }
 .actions ul { padding-left: 1.25rem; }
 code { font-family: var(--code); font-size: 0.875rem; overflow-wrap: anywhere; }

@@ -45,9 +45,10 @@ Watch your first print in dry-run mode, then turn dry run off in the settings on
 
 ## Linking spools
 
-If the bridge does not know a loaded spool, the dashboard asks you to choose. Both choices need dry run to be off, because a dry run never writes to Spoolman.
+If the bridge does not know a loaded spool, it checks Spoolman and suggests the best match by vendor, material, name and color. The dashboard shows the match next to the weights on the tag, and nothing is linked until you confirm. Confirming needs dry run to be off, because a dry run never writes to Spoolman.
 
-- **Link to an existing spool:** the list suggests spools from the same vendor first. You can choose to use the weights from the tag. Other extra fields are kept.
+- **Confirm and link:** links the suggested spool. You choose whether to update Spoolman with the weights from the tag. Other extra fields are kept.
+- **Link to another spool:** the list shows suggested spools first.
 - **Create a new spool:** the bridge finds or creates the vendor and filament, then creates the spool with the weights from the tag.
 
 Set `AUTO_CREATE` or turn it on in the settings to create unknown spools without asking.
