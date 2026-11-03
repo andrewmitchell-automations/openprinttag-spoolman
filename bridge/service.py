@@ -2,6 +2,7 @@
 because two simultaneous token refreshes could invalidate a rotated refresh token."""
 
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -188,7 +189,8 @@ class Service:
 
     def start(self) -> None:
         log.info(
-            "Starting; polling every %d s, DRY_RUN=%s, AUTO_CREATE=%s",
+            "Starting version %s; polling every %d s, DRY_RUN=%s, AUTO_CREATE=%s",
+            os.environ.get("APP_VERSION", "dev"),
             self.settings.poll_interval, self.settings.dry_run, self.settings.auto_create,
         )
         self.thread = threading.Thread(target=self._loop, name="poller", daemon=True)

@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -16,6 +17,10 @@ log = logging.getLogger(__name__)
 
 SPOOL_UUID_FIELD = "opt_instance_uuid"
 FILAMENT_UUID_FIELD = "opt_material_uuid"
+# The consumed weight the spool's used_weight already accounts for. Kept on the spool in Spoolman,
+# not only in state.json, so a second bridge, a reinstall or a lost data folder cannot deduct the
+# same grams twice.
+CONSUMED_FIELD = "opt_consumed_weight"
 WEIGHT_EPSILON = 0.001
 USED_WEIGHT_TOLERANCE = 1
 HIGH_CONFIDENCE = 70
@@ -189,6 +194,43 @@ def index_spools(spools: list[dict]) -> dict[str, dict]:
     return index
 
 
+def duplicate_links(spools: list[dict]) -> dict[str, list[int]]:
+    """Instance UUIDs that more than one spool is linked to, with those spools' IDs."""
+    by_uuid: dict[str, list[int]] = {}
+    for spool in spools:
+        uuid = extra_value(spool, SPOOL_UUID_FIELD)
+        if uuid:
+            by_uuid.setdefault(uuid, []).append(spool["id"])
+    return {uuid: ids for uuid, ids in by_uuid.items() if len(ids) > 1}
+
+
+def stored_consumed(spool: dict) -> float | None:
+    """The consumed weight the bridge last accounted for on this spool, if it wrote one."""
+    value = extra_value(spool, CONSUMED_FIELD)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        log.warning("Spool %s has an unreadable %s value %r; ignoring it", spool.get("id"), CONSUMED_FIELD, value)
+        return None
+
+
+def encode_consumed(consumed: float) -> str:
+    return json.dumps(round(float(consumed), 3))
+
+
+def has_openprinttag_tag(spool: dict) -> bool:
+    """Spoolman 0.27 can link a physical OpenPrintTag tag to a spool itself, when a reader scans it."""
+    return any((tag.get("format") or "").casefold() == "openprinttag" for tag in spool.get("tags") or [])
+
+
+def implausible_use(loaded: "LoadedSpool", delta: float) -> bool:
+    """More than a whole spool in one step means the numbers belong to something else."""
+    full = loaded.full_weight or loaded.nominal_weight
+    return full is not None and delta > full + USED_WEIGHT_TOLERANCE
+
+
 def _color_distance(a: str | None, b: str | None) -> float | None:
     if not a or not b or len(a) != 6 or len(b) != 6:
         return None
@@ -241,6 +283,8 @@ def score_spool(loaded: LoadedSpool, spool: dict, other_locations: tuple[str, ..
         if abs(remaining - (loaded.full_weight - (loaded.consumed_weight or 0))) <= 50:
             score += 5
             reasons.append("Remaining weight is close")
+    if has_openprinttag_tag(spool):
+        reasons.append("Has an OpenPrintTag tag in Spoolman")
     if spool.get("location") and spool["location"] in other_locations:
         score -= 15
         reasons.append("Located at another printer")
@@ -350,6 +394,9 @@ class State:
         except ValueError:
             log.error("%s is unreadable; starting from new baselines", path)
 
+    def seen_in_dry_run(self, uuid: str) -> bool:
+        return self.dry_run and uuid in self._seen
+
     def previous(self, uuid: str) -> float | None:
         if self.dry_run and uuid in self._seen:
             return self._seen[uuid]
@@ -383,13 +430,16 @@ class Bridge:
         self._warned_unlinked: set[str] = set()
         self._placed: dict[str, set[str]] = {}
         self._warned_moved: set[str] = set()
+        self._warned_duplicates: set[str] = set()
 
     def poll(self, printer_config: PrinterConfig) -> dict:
         printer = self.connect.fetch_printer(printer_config.organization_id, printer_config.uuid)
         loaded = self._with_warehouse_details(parse_loaded_spools(printer), printer_config.organization_id)
         log.info("Printer %s is %s with %d spool(s) loaded", printer.get("name"), printer.get("state"), len(loaded))
         self._ensure_extra_fields()
-        spools = index_spools(self.spoolman.list_spools())
+        all_spools = self.spoolman.list_spools()
+        spools = index_spools(all_spools)
+        warnings = self._duplicate_warnings(all_spools, loaded)
         # A spool that was taken out gets its location set again the next time it is loaded.
         placed = self._placed.setdefault(printer_config.uuid, set())
         taken_out = placed - {spool.uuid for spool in loaded}
@@ -398,9 +448,25 @@ class Bridge:
         tools = []
         for spool in loaded:
             matched = spools.get(spool.uuid)
-            spool_id = self._sync_spool(spool, matched, printer_config.location, placed)
+            spool_id = self._sync_spool(spool, matched, printer_config.location, placed, all_spools, warnings)
             tools.append({"spool": spool, "spool_id": spool_id})
-        return {"name": printer.get("name"), "state": printer.get("state"), "tools": tools, "time": time.time()}
+        return {"name": printer.get("name"), "state": printer.get("state"), "tools": tools, "warnings": warnings, "time": time.time()}
+
+    def _duplicate_warnings(self, spools: list[dict], loaded: list[LoadedSpool]) -> list[str]:
+        """Two spools linked to one loaded tag means one of them gets no consumption."""
+        warnings = []
+        loaded_now = {spool.uuid for spool in loaded}
+        for uuid, ids in duplicate_links(spools).items():
+            if uuid not in loaded_now:
+                continue
+            ids_text = ", ".join(f"#{i}" for i in ids)
+            warnings.append(
+                f"Spools {ids_text} are all linked to the loaded tag {uuid}. Only #{ids[0]} gets the consumption. Unlink the duplicates."
+            )
+            if uuid not in self._warned_duplicates:
+                self._warned_duplicates.add(uuid)
+                log.warning("Spools %s are all linked to instance %s", ids_text, uuid)
+        return warnings
 
     def _with_warehouse_details(self, loaded: list[LoadedSpool], organization_id: str) -> list[LoadedSpool]:
         if not any(spool.is_missing_details for spool in loaded):
@@ -419,11 +485,15 @@ class Bridge:
             return
         if not self.spoolman.extra_field_exists("spool", SPOOL_UUID_FIELD):
             self.spoolman.create_extra_field("spool", SPOOL_UUID_FIELD, "OpenPrintTag instance UUID")
+        if not self.spoolman.extra_field_exists("spool", CONSUMED_FIELD):
+            self.spoolman.create_extra_field("spool", CONSUMED_FIELD, "OpenPrintTag consumed (g), set by the bridge", "float")
         if not self.spoolman.extra_field_exists("filament", FILAMENT_UUID_FIELD):
             self.spoolman.create_extra_field("filament", FILAMENT_UUID_FIELD, "OpenPrintTag material UUID")
         self.fields_ready = not self.spoolman.dry_run
 
-    def _sync_spool(self, loaded: LoadedSpool, spool: dict | None, location: str, placed: set[str]) -> int | None:
+    def _sync_spool(
+        self, loaded: LoadedSpool, spool: dict | None, location: str, placed: set[str], all_spools: list[dict] | None = None, warnings: list[str] | None = None
+    ) -> int | None:
         log.info(
             "Tool %s: %s %s, instance %s, actual %s g, consumed %s g, NFC %s",
             loaded.tool_id, loaded.brand, loaded.material_name, loaded.uuid,
@@ -431,8 +501,20 @@ class Bridge:
         )
         if spool is None:
             if self.auto_create and loaded.is_from_nfc:
-                created = self.create_spool(loaded, location)
-                return created["id"] if created else None
+                existing = self._likely_existing_spool(loaded, all_spools or [])
+                if existing is None:
+                    created = self.create_spool(loaded, location)
+                    return created["id"] if created else None
+                message = (
+                    f"Did not create a new spool for {loaded.display_name}: Spoolman spool {existing['label']} looks like the same spool "
+                    f"({', '.join(existing['reasons'])}). Link it instead, or create a new one from the dashboard."
+                )
+                if warnings is not None:
+                    warnings.append(message)
+                if loaded.uuid not in self._warned_unlinked:
+                    self._warned_unlinked.add(loaded.uuid)
+                    log.warning("%s", message)
+                return None
             if loaded.uuid not in self._warned_unlinked:
                 self._warned_unlinked.add(loaded.uuid)
                 log.warning("Instance %s is not linked to a Spoolman spool; waiting for a choice (NFC %s)", loaded.uuid, loaded.is_from_nfc)
@@ -441,8 +523,20 @@ class Bridge:
         if spool.get("archived"):
             log.warning("Spool %s is archived in Spoolman but loaded in the printer", spool["id"])
         self._sync_location(loaded, spool, location, placed)
-        self._sync_consumption(loaded, spool["id"])
+        self._sync_consumption(loaded, spool)
         return spool["id"]
+
+    @staticmethod
+    def _likely_existing_spool(loaded: LoadedSpool, spools: list[dict]) -> dict | None:
+        """An unlinked spool that is very likely this one, for example one Spoolman created when its own reader scanned the tag."""
+        candidates = [
+            score_spool(loaded, spool)
+            for spool in spools
+            if not spool.get("archived") and not extra_value(spool, SPOOL_UUID_FIELD)
+        ]
+        strong = [c for c in candidates if c["score"] >= HIGH_CONFIDENCE]
+        strong.sort(key=lambda c: (-c["score"], c["id"]))
+        return strong[0] if strong else None
 
     def _sync_location(self, loaded: LoadedSpool, spool: dict, location: str, placed: set[str]) -> None:
         """Set the location once per load, so the bridge never fights over it with something else that writes it."""
@@ -458,23 +552,62 @@ class Bridge:
                 spool["id"], spool.get("location"), location,
             )
 
-    def _sync_consumption(self, loaded: LoadedSpool, spool_id: int) -> None:
+    def _previous_consumed(self, uuid: str, spool: dict) -> float | None:
+        if self.state.seen_in_dry_run(uuid):
+            return self.state.previous(uuid)
+        stored = stored_consumed(spool)
+        return stored if stored is not None else self.state.previous(uuid)
+
+    def _sync_consumption(self, loaded: LoadedSpool, spool: dict) -> None:
+        spool_id = spool["id"]
         if loaded.consumed_weight is None:
             log.warning("Connect reported no consumed weight for instance %s", loaded.uuid)
             return
         current = float(loaded.consumed_weight)
-        previous = self.state.previous(loaded.uuid)
+        previous = self._previous_consumed(loaded.uuid, spool)
         action, delta = consumption_step(previous, current)
+        if action == "use" and implausible_use(loaded, delta):
+            log.error(
+                "Instance %s jumped from %s g to %s g consumed, more than a whole spool. Not deducting it; starting again from %s g",
+                loaded.uuid, previous, current, current,
+            )
+            action = "rebase"
         if action == "baseline":
             log.info("First sighting of instance %s; baseline %s g, nothing deducted", loaded.uuid, current)
         elif action == "rebase":
-            log.warning("Consumed weight for instance %s fell from %s g to %s g; rebasing", loaded.uuid, previous, current)
+            log.warning("Consumed weight for instance %s went from %s g to %s g; rebasing", loaded.uuid, previous, current)
         elif action == "use":
             log.info("Instance %s consumed %s g more", loaded.uuid, round(delta, 3))
-            self.spoolman.use_spool(spool_id, delta)
+        elif stored_consumed(spool) is None and not self.spoolman.dry_run:
+            # Spools linked before the marker existed get it on their next poll.
+            action = "baseline"
         else:
             return
-        self.state.record(loaded.uuid, current, action)
+        if action == "use":
+            self._deduct(spool_id, delta, current)
+        else:
+            self.spoolman.update_spool(spool_id, {"extra": {**(spool.get("extra") or {}), CONSUMED_FIELD: encode_consumed(current)}})
+        self.state.record(loaded.uuid, current, "use" if action == "use" else action)
+
+    def _deduct(self, spool_id: int, delta: float, consumed: float) -> None:
+        """Deduct and move the marker in one write, so a retry or a second bridge cannot deduct the same grams again."""
+        fresh = self.spoolman.get_spool(spool_id)
+        stored = stored_consumed(fresh)
+        if stored is not None and stored >= consumed - WEIGHT_EPSILON:
+            log.info("Spool %s already accounts for %s g consumed; something else deducted it", spool_id, stored)
+            return
+        if stored is not None:
+            # The marker moved since the spool list was read: only deduct the rest.
+            delta = consumed - stored
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        body = {
+            "used_weight": round(float(fresh.get("used_weight") or 0) + delta, 3),
+            "last_used": now,
+            "extra": {**(fresh.get("extra") or {}), CONSUMED_FIELD: encode_consumed(consumed)},
+        }
+        if not fresh.get("first_used"):
+            body["first_used"] = now
+        self.spoolman.update_spool(spool_id, body)
 
     def link_spool(self, loaded: LoadedSpool, spool_id: int, selected: set[str], loaded_now: set[str] | None = None) -> None:
         """Apply the review page's choices. Other extra fields, like card_uids, are kept."""
@@ -486,6 +619,8 @@ class Bridge:
         changes = {c["key"]: c for c in build_link_changes(loaded, spool, 0)}
         spool_extra = dict(spool.get("extra") or {})
         spool_extra[SPOOL_UUID_FIELD] = encode_extra(loaded.uuid)
+        if loaded.consumed_weight is not None:
+            spool_extra[CONSUMED_FIELD] = encode_consumed(loaded.consumed_weight)
         spool_body: dict = {"extra": spool_extra}
         filament_body: dict = {}
         filament = spool.get("filament") or {}
@@ -510,8 +645,15 @@ class Bridge:
 
     def unlink_spool(self, spool_id: int) -> None:
         spool = self.spoolman.get_spool(spool_id)
-        extra = {k: v for k, v in (spool.get("extra") or {}).items() if k != SPOOL_UUID_FIELD}
-        self.spoolman.update_spool(spool_id, {"extra": extra})
+        kept = {k: v for k, v in (spool.get("extra") or {}).items() if k not in (SPOOL_UUID_FIELD, CONSUMED_FIELD)}
+        try:
+            # Spoolman 0.27 merges extra fields per key, so a field is only removed when it is sent as null.
+            self.spoolman.update_spool(spool_id, {"extra": {**kept, SPOOL_UUID_FIELD: None, CONSUMED_FIELD: None}})
+        except SpoolmanError as e:
+            if "HTTP 422" not in str(e):
+                raise
+            # Older Spoolman replaces the whole extra dict and does not accept null values.
+            self.spoolman.update_spool(spool_id, {"extra": kept})
         if not self.spoolman.dry_run and extra_value(self.spoolman.get_spool(spool_id), SPOOL_UUID_FIELD):
             raise SpoolmanError(f"Spoolman kept the link on spool {spool_id}")
 
@@ -561,7 +703,7 @@ class Bridge:
                 # Filament used before the spool reached Spoolman, so remaining weight is right.
                 "used_weight": consumed,
                 "location": location or None,
-                "extra": {SPOOL_UUID_FIELD: encode_extra(loaded.uuid)},
+                "extra": {SPOOL_UUID_FIELD: encode_extra(loaded.uuid), CONSUMED_FIELD: encode_consumed(consumed)},
             }
         )
         if created is not None:

@@ -105,17 +105,27 @@ class FakeConnect:
         return self.warehouse
 
 
-def existing_spool(location="Core One", extra=None):
+def linked_extra(consumed=None, **more):
+    extra = {"opt_instance_uuid": json.dumps(UUID), **more}
+    if consumed is not None:
+        extra["opt_consumed_weight"] = json.dumps(consumed)
+    return extra
+
+
+def existing_spool(location="Core One", extra=None, used=100.0):
+    """A linked spool whose marker says it accounts for 0 g, which is what printer() reports by default."""
     return {
         "id": 42,
         "location": location,
         "archived": False,
-        "extra": extra if extra is not None else {"opt_instance_uuid": json.dumps(UUID)},
+        "used_weight": used,
+        "first_used": "2026-10-01T10:00:00Z",
+        "extra": extra if extra is not None else linked_extra(0),
     }
 
 
 def mock_fields(mock, present=True):
-    fields = [{"key": "opt_instance_uuid"}] if present else []
+    fields = [{"key": "opt_instance_uuid"}, {"key": "opt_consumed_weight"}] if present else []
     filament_fields = [{"key": "opt_material_uuid"}] if present else []
     mock.get(f"{SPOOLMAN}/api/v1/field/spool").respond(json=fields)
     mock.get(f"{SPOOLMAN}/api/v1/field/filament").respond(json=filament_fields)
@@ -158,42 +168,130 @@ def test_consumption_step(previous, current, expected):
 @respx.mock(assert_all_called=False)
 def test_first_sighting_of_existing_spool_only_sets_baseline(respx_mock, tmp_path):
     mock_fields(respx_mock)
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool()])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool(extra=linked_extra())])
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").respond(json={})
     make_bridge(tmp_path, printer(consumed=100)).poll()
-    assert writes(respx_mock) == []
+    assert [json.loads(c.request.content) for c in patch.calls] == [{"extra": linked_extra(100.0)}]
+    assert len(writes(respx_mock)) == 1
     assert json.loads((tmp_path / "state.json").read_text())["consumed"][UUID] == 100
 
 
+def mock_deduction(mock, spool):
+    mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[spool])
+    mock.get(f"{SPOOLMAN}/api/v1/spool/42").respond(json=spool)
+    return mock.patch(f"{SPOOLMAN}/api/v1/spool/42").respond(json={})
+
+
 @respx.mock(assert_all_called=False)
-def test_increase_deducts_the_delta_and_updates_state(respx_mock, tmp_path):
+def test_increase_deducts_the_delta_and_moves_the_marker_in_one_write(respx_mock, tmp_path):
+    mock_fields(respx_mock)
+    patch = mock_deduction(respx_mock, existing_spool(extra=linked_extra(10, card_uids=json.dumps("ABC"))))
+    make_bridge(tmp_path, printer(consumed=12.5)).poll()
+    assert patch.call_count == 1
+    body = json.loads(patch.calls[0].request.content)
+    assert body["used_weight"] == 102.5
+    assert body["extra"] == linked_extra(12.5, card_uids=json.dumps("ABC"))
+    assert "last_used" in body and "first_used" not in body
+    assert respx_mock.calls.last.request.method == "PATCH"
+    assert json.loads((tmp_path / "state.json").read_text())["consumed"][UUID] == 12.5
+
+
+@respx.mock(assert_all_called=False)
+def test_a_spool_linked_before_the_marker_uses_the_local_state(respx_mock, tmp_path):
     (tmp_path / "state.json").write_text(json.dumps({"consumed": {UUID: 10}}))
     mock_fields(respx_mock)
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool()])
-    use = respx_mock.put(f"{SPOOLMAN}/api/v1/spool/42/use").respond(json={})
+    patch = mock_deduction(respx_mock, existing_spool(extra=linked_extra()))
     make_bridge(tmp_path, printer(consumed=12.5)).poll()
-    assert json.loads(use.calls[0].request.content) == {"use_weight": 2.5}
-    assert json.loads((tmp_path / "state.json").read_text())["consumed"][UUID] == 12.5
+    body = json.loads(patch.calls[0].request.content)
+    assert body["used_weight"] == 102.5
+    assert body["extra"]["opt_consumed_weight"] == "12.5"
+
+
+@respx.mock(assert_all_called=False)
+def test_the_marker_in_spoolman_wins_over_the_local_state(respx_mock, tmp_path):
+    """Another bridge, or this one before a reinstall, already deducted up to 12 g."""
+    (tmp_path / "state.json").write_text(json.dumps({"consumed": {UUID: 6}}))
+    mock_fields(respx_mock)
+    patch = mock_deduction(respx_mock, existing_spool(extra=linked_extra(12)))
+    make_bridge(tmp_path, printer(consumed=12)).poll()
+    assert patch.call_count == 0
+    assert writes(respx_mock) == []
+
+
+@respx.mock(assert_all_called=False)
+def test_two_bridges_deduct_each_gram_only_once(respx_mock, tmp_path):
+    spool = existing_spool(extra=linked_extra(0))
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[spool])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/42").mock(side_effect=lambda request: httpx.Response(200, json=spool))
+
+    def apply(request):
+        body = json.loads(request.content)
+        spool.update(used_weight=body.get("used_weight", spool["used_weight"]), extra=body["extra"])
+        return httpx.Response(200, json=spool)
+
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").mock(side_effect=apply)
+    # Both read the spool list before either has written.
+    first = make_bridge(tmp_path / "a", printer(consumed=6))
+    second = make_bridge(tmp_path / "b", printer(consumed=6))
+    first.poll()
+    second.poll()
+    assert spool["used_weight"] == 106
+    assert patch.call_count == 1
+
+
+@respx.mock(assert_all_called=False)
+def test_a_deduction_that_another_bridge_partly_made_only_deducts_the_rest(respx_mock, tmp_path):
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool(extra=linked_extra(0))])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/42").respond(json=existing_spool(extra=linked_extra(4), used=104))
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").respond(json={})
+    make_bridge(tmp_path, printer(consumed=6)).poll()
+    assert json.loads(patch.calls[0].request.content)["used_weight"] == 106
+
+
+@respx.mock(assert_all_called=False)
+def test_first_use_sets_first_used(respx_mock, tmp_path):
+    mock_fields(respx_mock)
+    spool = existing_spool(extra=linked_extra(0))
+    spool["first_used"] = None
+    patch = mock_deduction(respx_mock, spool)
+    make_bridge(tmp_path, printer(consumed=3)).poll()
+    body = json.loads(patch.calls[0].request.content)
+    assert body["first_used"] == body["last_used"]
 
 
 @respx.mock(assert_all_called=False)
 def test_state_is_unchanged_when_the_deduction_fails(respx_mock, tmp_path):
     (tmp_path / "state.json").write_text(json.dumps({"consumed": {UUID: 10}}))
     mock_fields(respx_mock)
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool()])
-    respx_mock.put(f"{SPOOLMAN}/api/v1/spool/42/use").respond(500, text="boom")
+    spool = existing_spool(extra=linked_extra(10))
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[spool])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/42").respond(json=spool)
+    respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").respond(500, text="boom")
     with pytest.raises(Exception):
         make_bridge(tmp_path, printer(consumed=12.5)).poll()
     assert json.loads((tmp_path / "state.json").read_text())["consumed"][UUID] == 10
 
 
 @respx.mock(assert_all_called=False)
-def test_decrease_rebases_without_a_write(respx_mock, tmp_path):
-    (tmp_path / "state.json").write_text(json.dumps({"consumed": {UUID: 10}}))
+def test_decrease_rebases_and_only_moves_the_marker(respx_mock, tmp_path):
     mock_fields(respx_mock)
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool()])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool(extra=linked_extra(10))])
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").respond(json={})
     make_bridge(tmp_path, printer(consumed=4)).poll()
-    assert writes(respx_mock) == []
+    assert [json.loads(c.request.content) for c in patch.calls] == [{"extra": linked_extra(4.0)}]
     assert json.loads((tmp_path / "state.json").read_text())["consumed"][UUID] == 4
+
+
+@respx.mock(assert_all_called=False)
+def test_more_than_a_whole_spool_in_one_step_is_not_deducted(respx_mock, tmp_path, caplog):
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool(extra=linked_extra(10))])
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").respond(json={})
+    make_bridge(tmp_path, printer(consumed=1500)).poll()
+    assert [json.loads(c.request.content) for c in patch.calls] == [{"extra": linked_extra(1500.0)}]
+    assert "more than a whole spool" in caplog.text
 
 
 # Mapping and parsing
@@ -261,7 +359,7 @@ def test_unknown_instance_creates_vendor_filament_and_spool(respx_mock, tmp_path
     assert spool_body["spool_weight"] == 277
     assert spool_body["used_weight"] == 30
     assert spool_body["location"] == "Core One"
-    assert spool_body["extra"] == {"opt_instance_uuid": json.dumps(UUID)}
+    assert spool_body["extra"] == linked_extra(30.0)
     assert "card_uids" not in spool_body["extra"]
     assert json.loads((tmp_path / "state.json").read_text())["consumed"][UUID] == 30
 
@@ -344,9 +442,11 @@ def test_missing_extra_fields_are_created(respx_mock, tmp_path):
     mock_fields(respx_mock, present=False)
     respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool()])
     spool_field = respx_mock.post(f"{SPOOLMAN}/api/v1/field/spool/opt_instance_uuid").respond(json=[])
+    consumed_field = respx_mock.post(f"{SPOOLMAN}/api/v1/field/spool/opt_consumed_weight").respond(json=[])
     filament_field = respx_mock.post(f"{SPOOLMAN}/api/v1/field/filament/opt_material_uuid").respond(json=[])
     make_bridge(tmp_path, printer()).poll()
     assert json.loads(spool_field.calls[0].request.content)["field_type"] == "text"
+    assert json.loads(consumed_field.calls[0].request.content)["field_type"] == "float"
     assert filament_field.called
 
 
@@ -365,10 +465,12 @@ def custom_tag_printer(consumed=0):
 def test_a_linked_spool_without_nfc_reading_is_still_tracked(respx_mock, tmp_path):
     (tmp_path / "state.json").write_text(json.dumps({"consumed": {"custom": 3}}))
     mock_fields(respx_mock)
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[{"id": 55, "location": "Core One", "extra": {"opt_instance_uuid": json.dumps("custom")}}])
-    use = respx_mock.put(f"{SPOOLMAN}/api/v1/spool/55/use").respond(json={})
+    spool = {"id": 55, "location": "Core One", "used_weight": 0, "extra": {"opt_instance_uuid": json.dumps("custom")}}
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[spool])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/55").respond(json=spool)
+    use = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/55").respond(json={})
     result = make_bridge(tmp_path, custom_tag_printer(consumed=8), auto_create=False).poll()
-    assert json.loads(use.calls[0].request.content) == {"use_weight": 5}
+    assert json.loads(use.calls[0].request.content)["used_weight"] == 5
     assert result["tools"][0]["spool_id"] == 55
 
 
@@ -418,12 +520,13 @@ def test_dry_run_logs_a_deduction_only_once(respx_mock, tmp_path, caplog):
     caplog.set_level("INFO")
     (tmp_path / "state.json").write_text(json.dumps({"consumed": {UUID: 10}}))
     mock_fields(respx_mock)
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool()])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool(extra=linked_extra())])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/42").respond(json=existing_spool(extra=linked_extra()))
     bridge = make_bridge(tmp_path, printer(consumed=15), dry_run=True)
     bridge.poll()
     bridge.poll()
     assert writes(respx_mock) == []
-    assert caplog.text.count("DRY-RUN would call PUT /spool/42/use") == 1
+    assert caplog.text.count('DRY-RUN would call PATCH /spool/42 {"used_weight": 105.0') == 1
     assert json.loads((tmp_path / "state.json").read_text())["consumed"][UUID] == 10
 
 
@@ -563,14 +666,22 @@ def test_login_json_is_parsed():
 @respx.mock(assert_all_called=False)
 def test_going_live_deducts_what_was_used_during_the_dry_run(respx_mock, tmp_path):
     mock_fields(respx_mock)
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool()])
+    spool = existing_spool(extra=linked_extra())
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").mock(side_effect=lambda request: httpx.Response(200, json=[spool]))
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/42").mock(side_effect=lambda request: httpx.Response(200, json=spool))
     make_bridge(tmp_path, printer(consumed=5), dry_run=True).poll()
     assert writes(respx_mock) == []
-    use = respx_mock.put(f"{SPOOLMAN}/api/v1/spool/42/use").respond(json={})
+
+    def apply(request):
+        body = json.loads(request.content)
+        spool.update(used_weight=body.get("used_weight", spool["used_weight"]), extra=body["extra"])
+        return httpx.Response(200, json=spool)
+
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").mock(side_effect=apply)
     make_bridge(tmp_path, printer(consumed=20)).poll()
-    assert json.loads(use.calls[0].request.content) == {"use_weight": 15}
+    assert json.loads(patch.calls[0].request.content)["used_weight"] == 115
     make_bridge(tmp_path, printer(consumed=20)).poll()
-    assert use.call_count == 1
+    assert patch.call_count == 1
 
 
 # Linking
@@ -674,7 +785,7 @@ def test_link_applies_the_selected_changes_and_keeps_extras(respx_mock, tmp_path
     filament_patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/filament/49").respond(json={})
     make_bridge(tmp_path, printer(), auto_create=False).bridge.link_spool(loaded_spool(), 52, ALL_KEYS)
     body = json.loads(spool_patch.calls[0].request.content)
-    assert body["extra"] == {"card_uids": json.dumps("ABC"), "opt_instance_uuid": json.dumps(UUID)}
+    assert body["extra"] == {"card_uids": json.dumps("ABC"), "opt_instance_uuid": json.dumps(UUID), "opt_consumed_weight": "30.0"}
     assert (body["initial_weight"], body["spool_weight"], body["used_weight"]) == (959, 277, 30)
     assert "location" not in body
     filament = json.loads(filament_patch.calls[0].request.content)
@@ -712,7 +823,7 @@ def test_unlink_keeps_other_extras_and_notices_if_the_link_stays(respx_mock, tmp
     patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/52").respond(json={})
     bridge = make_bridge(tmp_path, printer(), auto_create=False).bridge
     bridge.unlink_spool(52)
-    assert json.loads(patch.calls[0].request.content) == {"extra": {"card_uids": json.dumps("ABC")}}
+    assert json.loads(patch.calls[0].request.content) == {"extra": {"card_uids": json.dumps("ABC"), "opt_instance_uuid": None, "opt_consumed_weight": None}}
     route.side_effect = [httpx.Response(200, json=linked), httpx.Response(200, json=linked)]
     with pytest.raises(Exception, match="kept the link"):
         bridge.unlink_spool(52)
@@ -789,6 +900,7 @@ def test_a_nominal_weight_does_not_replace_spoolmans_weight_by_default():
 def test_poll_adds_warehouse_details_to_a_loaded_spool(respx_mock, tmp_path):
     mock_fields(respx_mock)
     respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[{"id": 55, "location": "Core One", "extra": {"opt_instance_uuid": json.dumps("custom")}}])
+    respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/55").respond(json={})
     poller = make_bridge(tmp_path, warehouse_spool_printer())
     poller.bridge.connect.warehouse = [WAREHOUSE_ITEM, {"name": "Other", "materialPackageInstance": None}]
     assert poller.poll()["tools"][0]["spool"].display_name == "ELEGOO PETG-GF Black"
@@ -798,12 +910,14 @@ def test_poll_adds_warehouse_details_to_a_loaded_spool(respx_mock, tmp_path):
 def test_consumption_is_still_tracked_when_the_warehouse_cannot_be_read(respx_mock, tmp_path):
     (tmp_path / "state.json").write_text(json.dumps({"consumed": {"custom": 3}}))
     mock_fields(respx_mock)
-    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[{"id": 55, "location": "Core One", "extra": {"opt_instance_uuid": json.dumps("custom")}}])
-    use = respx_mock.put(f"{SPOOLMAN}/api/v1/spool/55/use").respond(json={})
+    spool = {"id": 55, "location": "Core One", "used_weight": 0, "extra": {"opt_instance_uuid": json.dumps("custom")}}
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[spool])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/55").respond(json=spool)
+    use = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/55").respond(json={})
     poller = make_bridge(tmp_path, warehouse_spool_printer(consumed=8))
     poller.bridge.connect.warehouse = ConnectError("no warehouse")
     assert poller.poll()["tools"][0]["spool"].brand is None
-    assert json.loads(use.calls[0].request.content) == {"use_weight": 5}
+    assert json.loads(use.calls[0].request.content)["used_weight"] == 5
 
 
 def test_a_spool_with_full_tag_data_does_not_read_the_warehouse():
@@ -837,6 +951,78 @@ def test_only_a_spool_that_used_the_warehouse_is_marked_as_a_warehouse_spool():
     loaded = parse_loaded_spools(warehouse_spool_printer())[0]
     assert loaded.from_warehouse is False
     assert fill_from_warehouse(loaded, WAREHOUSE_ITEM).from_warehouse is True
+
+
+@respx.mock(assert_all_called=False)
+def test_unlink_falls_back_for_a_spoolman_that_replaces_extras(respx_mock, tmp_path):
+    linked = {"id": 52, "extra": {"card_uids": json.dumps("ABC"), "opt_instance_uuid": json.dumps(UUID)}}
+    unlinked = {"id": 52, "extra": {"card_uids": json.dumps("ABC")}}
+    route = respx_mock.get(f"{SPOOLMAN}/api/v1/spool/52")
+    route.side_effect = [httpx.Response(200, json=linked), httpx.Response(200, json=unlinked)]
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/52")
+    patch.side_effect = [httpx.Response(422, json={"detail": "null"}), httpx.Response(200, json={})]
+    make_bridge(tmp_path, printer(), auto_create=False).bridge.unlink_spool(52)
+    assert json.loads(patch.calls[1].request.content) == {"extra": {"card_uids": json.dumps("ABC")}}
+
+
+# Duplicates
+
+
+def scanned_spool(spool_id=60, tags=({"uid": "E004010", "format": "openprinttag"},)):
+    """A spool Spoolman created itself when its own reader scanned the tag: it has no link to the instance."""
+    return {
+        "id": spool_id,
+        "archived": False,
+        "location": None,
+        "used_weight": 0,
+        "remaining_weight": 959,
+        "extra": {},
+        "tags": list(tags),
+        "filament": {"id": 49, "name": "PC Blend Jet Black", "material": "PC", "color_hex": "212929", "weight": 1000, "vendor": {"name": "Prusament"}, "extra": {}},
+    }
+
+
+@respx.mock(assert_all_called=False)
+def test_auto_create_does_not_duplicate_a_spool_spoolman_already_has(respx_mock, tmp_path, caplog):
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[scanned_spool()])
+    result = make_bridge(tmp_path, printer(consumed=30)).poll()
+    assert writes(respx_mock) == []
+    assert result["tools"][0]["spool_id"] is None
+    assert "#60" in result["warnings"][0] and "Has an OpenPrintTag tag in Spoolman" in result["warnings"][0]
+    assert "Did not create a new spool" in caplog.text
+
+
+@respx.mock(assert_all_called=False)
+def test_auto_create_still_creates_when_nothing_looks_like_the_spool(respx_mock, tmp_path):
+    other = scanned_spool()
+    other["filament"] = {"id": 3, "name": "Galaxy Black", "material": "PLA", "color_hex": "FFFFFF", "vendor": {"name": "Other"}, "extra": {}}
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[other])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/vendor").respond(json=[{"id": 7, "name": "Prusament"}])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/filament").respond(json=[{"id": 8, "name": "PC Blend Jet Black", "vendor": {"id": 7}}])
+    created = respx_mock.post(f"{SPOOLMAN}/api/v1/spool").respond(json={"id": 9})
+    make_bridge(tmp_path, printer()).poll()
+    assert created.called
+
+
+@respx.mock(assert_all_called=False)
+def test_two_spools_linked_to_the_loaded_tag_are_reported(respx_mock, tmp_path, caplog):
+    second = {**existing_spool(), "id": 43}
+    mock_fields(respx_mock)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").respond(json=[existing_spool(), second])
+    poller = make_bridge(tmp_path, printer())
+    result = poller.poll()
+    poller.poll()
+    assert result["warnings"] == [f"Spools #42, #43 are all linked to the loaded tag {UUID}. Only #42 gets the consumption. Unlink the duplicates."]
+    assert result["tools"][0]["spool_id"] == 42
+    assert caplog.text.count("are all linked to instance") == 1
+
+
+def test_an_openprinttag_tag_is_shown_as_a_reason():
+    candidate = score_spool(loaded_spool(), scanned_spool())
+    assert "Has an OpenPrintTag tag in Spoolman" in candidate["reasons"]
+    assert candidate["confidence"] == "High"
 
 
 def test_warehouse_items_become_spools_without_a_printer():
@@ -941,3 +1127,23 @@ def test_warehouse_interval_setting(tmp_path):
     assert load_settings({"DATA_DIR": str(tmp_path), "WAREHOUSE_INTERVAL": "120"}).warehouse_interval == 120
     with pytest.raises(ConfigError):
         load_settings({"DATA_DIR": str(tmp_path), "WAREHOUSE_INTERVAL": "5"})
+
+
+@respx.mock(assert_all_called=False)
+def test_a_spool_created_from_the_warehouse_only_deducts_what_was_used_after(respx_mock, tmp_path):
+    """Connect had already counted 6 g when the spool was created, so a later reading of 10 g deducts 4 g."""
+    created = creation_mocks(respx_mock, [], [{"id": 4, "name": "ELEGOO"}])
+    respx_mock.post(f"{SPOOLMAN}/api/v1/filament").respond(json={"id": 12})
+    make_bridge(tmp_path, printer()).bridge.create_spool(warehouse_spool(), "")
+    body = json.loads(created.calls[0].request.content)
+    assert body["used_weight"] == 6
+    assert json.loads(body["extra"]["opt_consumed_weight"]) == 6
+
+    spool = {"id": 42, "location": "Core One", "archived": False, "used_weight": 6.0,
+             "first_used": "2026-10-01T10:00:00Z", "extra": body["extra"]}
+    respx_mock.reset()
+    mock_fields(respx_mock)
+    patch = mock_deduction(respx_mock, spool)
+    make_bridge(tmp_path, warehouse_spool_printer(consumed=10)).poll()
+    deductions = [json.loads(c.request.content) for c in patch.calls if "used_weight" in json.loads(c.request.content)]
+    assert [d["used_weight"] for d in deductions] == [10.0]
