@@ -9,6 +9,14 @@ Releases are cut from the Actions tab — see [docs/releases.md](docs/releases.m
 
 <!-- new releases go below this line -->
 
+## 0.3.0 - 2026-11-03
+
+- Release automatically when something lands on main
+- Read labels only from the pull request merged into main
+- Switch license from MIT to CC BY-NC-SA 4.0
+- Set the image license label explicitly
+- Update the README screenshots for the sidebar and Warehouse page
+
 ## 0.2.0 - 2026-11-03
 
 - Run the published image instead of building on the server
