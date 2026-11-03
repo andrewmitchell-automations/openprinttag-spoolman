@@ -17,7 +17,7 @@ Everything is driven by GitHub Actions. There are three workflows:
 
 The workflow then runs the tests, works out the next version from the newest
 `vX.Y.Z` tag, writes it to `VERSION`, adds a `CHANGELOG.md` entry listing every
-non-merge commit since the previous tag, commits that as `Release vX.Y.Z`, tags
+non-merge commit since the previous tag (the very first release just says "First tagged release"), commits that as `Release vX.Y.Z`, tags
 it, pushes the multi-architecture image to GHCR as `X.Y.Z`, `X.Y` and `latest`,
 and creates the GitHub release.
 

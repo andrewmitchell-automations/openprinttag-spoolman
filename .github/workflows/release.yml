@@ -66,11 +66,11 @@ jobs:
           set -euo pipefail
           previous="${{ steps.version.outputs.previous }}"
           if [ -n "$previous" ]; then
-            range="$previous..HEAD"
+            git log --no-merges --reverse --pretty='- %s' "$previous..HEAD" > /tmp/notes.md
           else
-            range="HEAD"
+            # The first release would otherwise list the whole history.
+            echo "- First tagged release." > /tmp/notes.md
           fi
-          git log --no-merges --reverse --pretty='- %s' "$range" > /tmp/notes.md
           if [ ! -s /tmp/notes.md ]; then
             echo "No commits since $previous, so there is nothing to release." >&2
             exit 1

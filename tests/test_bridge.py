@@ -1127,3 +1127,23 @@ def test_warehouse_interval_setting(tmp_path):
     assert load_settings({"DATA_DIR": str(tmp_path), "WAREHOUSE_INTERVAL": "120"}).warehouse_interval == 120
     with pytest.raises(ConfigError):
         load_settings({"DATA_DIR": str(tmp_path), "WAREHOUSE_INTERVAL": "5"})
+
+
+@respx.mock(assert_all_called=False)
+def test_a_spool_created_from_the_warehouse_only_deducts_what_was_used_after(respx_mock, tmp_path):
+    """Connect had already counted 6 g when the spool was created, so a later reading of 10 g deducts 4 g."""
+    created = creation_mocks(respx_mock, [], [{"id": 4, "name": "ELEGOO"}])
+    respx_mock.post(f"{SPOOLMAN}/api/v1/filament").respond(json={"id": 12})
+    make_bridge(tmp_path, printer()).bridge.create_spool(warehouse_spool(), "")
+    body = json.loads(created.calls[0].request.content)
+    assert body["used_weight"] == 6
+    assert json.loads(body["extra"]["opt_consumed_weight"]) == 6
+
+    spool = {"id": 42, "location": "Core One", "archived": False, "used_weight": 6.0,
+             "first_used": "2026-10-01T10:00:00Z", "extra": body["extra"]}
+    respx_mock.reset()
+    mock_fields(respx_mock)
+    patch = mock_deduction(respx_mock, spool)
+    make_bridge(tmp_path, warehouse_spool_printer(consumed=10)).poll()
+    deductions = [json.loads(c.request.content) for c in patch.calls if "used_weight" in json.loads(c.request.content)]
+    assert [d["used_weight"] for d in deductions] == [10.0]
