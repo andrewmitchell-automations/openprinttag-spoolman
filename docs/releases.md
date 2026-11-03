@@ -6,14 +6,21 @@ Everything is driven by GitHub Actions. There are three workflows:
 | --- | --- | --- |
 | `Tests` | every push to `main`/`development` and every pull request | runs `pytest` |
 | `Docker image` | every push to `main`/`development`, build-only on pull requests | publishes `ghcr.io/mathiasbk/openprinttag-spoolman:edge` (main), `:dev` (development) and a `:sha-xxxxxxx` tag |
-| `Release` | only when you start it by hand | tests, bumps the version, writes the changelog, tags, publishes the release and the versioned image |
+| `Release` | every push to `main` (normally a merged pull request), or by hand | tests, bumps the version, writes the changelog, tags, publishes the release and the versioned image |
 
 ## Cutting a release
 
-1. Open **Actions → Release → Run workflow**.
-2. Pick the branch (normally `main`) and whether this is a `patch`, `minor` or
-   `major` release.
-3. Press **Run workflow**.
+Merge a pull request into `main`. That starts **Release** by itself and raises
+the minor version (`0.2.0` → `0.3.0`). A label on the pull request changes that:
+
+| Label | Effect |
+| --- | --- |
+| `release:patch` | raise the patch number (`0.2.0` → `0.2.1`) |
+| `release:major` | raise the major number (`0.2.0` → `1.0.0`) |
+| `release:skip` | no release for this merge |
+
+To release by hand instead, open **Actions → Release → Run workflow**, pick
+`main` and the bump, and press **Run workflow**.
 
 The workflow then runs the tests, works out the next version from the newest
 `vX.Y.Z` tag, writes it to `VERSION`, adds a `CHANGELOG.md` entry listing every

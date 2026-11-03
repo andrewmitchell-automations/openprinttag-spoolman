@@ -1,6 +1,7 @@
 # OpenPrintTag Spoolman for Prusa Connect
 
 [![Tests](https://github.com/mathiasbk/openprinttag-spoolman/actions/workflows/tests.yml/badge.svg)](https://github.com/mathiasbk/openprinttag-spoolman/actions/workflows/tests.yml)
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](LICENSE)
 
 Sync OpenPrintTag spool data and filament usage from Prusa Connect to Spoolman.
 
@@ -126,14 +127,17 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 
 ## Screenshots
 
+The screenshots use made-up demo data.
+
 | | |
 |---|---|
+| ![The Warehouse page, a table of every spool Connect knows about](docs/screenshots/warehouse-page.png) | ![The Warehouse page on a phone](docs/screenshots/warehouse-page-mobile.png) |
 | ![Suggested matches for an unlinked spool](docs/screenshots/link-suggestion.png) | ![Reviewing a link before confirming](docs/screenshots/link-confirm.png) |
+| ![Warehouse spools waiting for a choice on the dashboard](docs/screenshots/warehouse.png) | ![Warehouse spools on a phone](docs/screenshots/warehouse-mobile.png) |
+| ![The dashboard in dark mode](docs/screenshots/dashboard-dark.png) | ![The dashboard on a phone](docs/screenshots/dashboard-mobile.png) |
+| ![The dashboard on a phone in dark mode](docs/screenshots/dashboard-mobile-dark.png) | ![Connecting to Spoolman](docs/screenshots/setup-spoolman.png) |
 | ![Setting up the Connect login](docs/screenshots/setup-connect.png) | ![Choosing printers](docs/screenshots/setup-printers.png) |
-| ![Choosing how the bridge runs](docs/screenshots/setup-operation.png) | ![The dashboard in dark mode](docs/screenshots/dashboard-dark.png) |
-| ![The dashboard on a phone](docs/screenshots/dashboard-mobile.png) | ![The dashboard on a phone in dark mode](docs/screenshots/dashboard-mobile-dark.png) |
-| ![Warehouse spools waiting for a choice](docs/screenshots/warehouse.png) | ![Warehouse spools on a phone](docs/screenshots/warehouse-mobile.png) |
-| ![The Warehouse page](docs/screenshots/warehouse-page.png) | ![The Warehouse page on a phone](docs/screenshots/warehouse-page-mobile.png) |
+| ![Choosing how the bridge runs](docs/screenshots/setup-operation.png) | |
 
 ## Development
 
@@ -147,4 +151,10 @@ python -m venv .venv
 
 ## License
 
-[MIT](LICENSE)
+Copyright (c) 2026 mathiasbk.
+
+This project is licensed under [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International](https://creativecommons.org/licenses/by-nc-sa/4.0/) (CC BY-NC-SA 4.0). See [LICENSE](LICENSE) for the full text.
+
+You may use, share and adapt it for non-commercial purposes, as long as you give credit and share your changes under the same license. Commercial use requires permission from the author.
+
+Releases up to and including v0.2.0 were published under the MIT license, and copies obtained under those releases keep those terms.

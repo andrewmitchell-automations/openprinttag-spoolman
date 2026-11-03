@@ -1,10 +1,20 @@
 name: Release
 
-# Cut a release by hand from the Actions tab: pick the branch (normally main)
-# and how far to bump the version. Everything after that is automatic — tests,
-# version file, changelog, git tag, GitHub release and the GHCR image.
+# Runs by itself whenever something lands on main, normally a merged pull
+# request. The version goes up by minor unless the pull request carries one
+# of these labels:
+#   release:major  raise the major number
+#   release:patch  raise the patch number
+#   release:skip   do not release this merge
+# It can also be started by hand from the Actions tab.
+#
+# The release commit this workflow pushes cannot start it again: pushes made
+# with GITHUB_TOKEN never trigger workflows, and the plan job also skips
+# commits that start with "Release v".
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       bump:
@@ -14,16 +24,63 @@ on:
         default: minor
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  release:
+  plan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      bump: ${{ steps.bump.outputs.bump }}
+    steps:
+      - name: Decide how far to bump
+        id: bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+          INPUT_BUMP: ${{ inputs.bump }}
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            bump="$INPUT_BUMP"
+          elif [[ "$HEAD_MESSAGE" == "Release v"* ]]; then
+            bump=none
+          else
+            # Only a pull request merged into main counts; the same commit can
+            # also belong to a pull request into development. An API failure
+            # stops the run rather than guessing.
+            labels=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+              --jq '[.[] | select(.base.ref == "main" and .merged_at != null)][0].labels // [] | .[].name')
+            echo "Pull request labels: ${labels:-none}"
+            if grep -qx 'release:skip' <<< "$labels"; then
+              bump=none
+            elif grep -qx 'release:major' <<< "$labels"; then
+              bump=major
+            elif grep -qx 'release:patch' <<< "$labels"; then
+              bump=patch
+            else
+              bump=minor
+            fi
+          fi
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+          echo "Bump: $bump"
+
+  release:
+    needs: plan
+    if: needs.plan.outputs.bump != 'none'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,7 +104,7 @@ jobs:
           previous=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
           IFS=. read -r major minor patch <<< "${previous#v}"
           major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
-          case "${{ inputs.bump }}" in
+          case "${{ needs.plan.outputs.bump }}" in
             major) major=$((major + 1)); minor=0; patch=0 ;;
             minor) minor=$((minor + 1)); patch=0 ;;
             patch) patch=$((patch + 1)) ;;
@@ -120,6 +177,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          labels: |
+            org.opencontainers.image.licenses=CC-BY-NC-SA-4.0
           tags: |
             type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }}
