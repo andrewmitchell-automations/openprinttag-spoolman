@@ -19,6 +19,7 @@
       {% if signed_in %}
       <nav>
         <a class="nav-link" href="{{ url_for('dashboard') }}" {{ 'aria-current=page' if request.endpoint == 'dashboard' }}>Dashboard</a>
+        <a class="nav-link" href="{{ url_for('warehouse') }}" {{ 'aria-current=page' if request.endpoint == 'warehouse' }}>Warehouse</a>
         <a class="nav-link" href="{{ url_for('logs') }}" {{ 'aria-current=page' if request.endpoint == 'logs' }}>Log</a>
         <a class="nav-link" href="{{ url_for('setup', step='spoolman') }}" {{ 'aria-current=page' if request.endpoint == 'setup' }}>Settings</a>
         <form method="post" action="{{ url_for('logout') }}"><button class="nav-link">Log out</button></form>

@@ -647,3 +647,79 @@ def test_the_warehouse_interval_can_be_saved(tmp_path):
     client.post("/setup/mode", data={"poll_interval": "60", "warehouse_interval": "900"})
     assert read_config(tmp_path)["warehouse_interval"] == 900
     assert service.settings.warehouse_interval == 900
+
+
+# The warehouse page
+
+def item(uuid, name, material="PETG", consumed=0, location="", empty=False, color="#101010"):
+    found = json.loads(json.dumps(WAREHOUSE_ITEMS[0]))
+    found.update(name=name, consumedWeight=consumed, location=location, empty=empty)
+    found["materialPackageInstance"]["uuid"] = uuid
+    found["materialPackageInstance"]["package"]["material"].update(type=material, primaryColor={"colorRgba": color})
+    return found
+
+
+@respx.mock(assert_all_called=False)
+def test_warehouse_page_lists_every_spool_with_its_link(respx_mock, tmp_path):
+    other = "9f1c2d3e-0000-5000-8000-000000000003"
+    items = [
+        item(WAREHOUSE_UUID, "PETG-GF Black", consumed=6, location="Shelf A"),
+        item(other, "PLA Galaxy", material="PLA", consumed=750, color="#5A2D82"),
+        item("9f1c2d3e-0000-5000-8000-000000000004", "Old ASA", material="ASA", consumed=1000, empty=True),
+    ]
+    linked = {**SPOOL, "remaining_weight": 990, "extra": {"opt_instance_uuid": json.dumps(WAREHOUSE_UUID)}}
+    client = signed_in(warehouse_service(respx_mock, tmp_path, items=items, spools=[linked]))
+    page = client.get("/warehouse").text
+    assert 'href="/warehouse" aria-current=page' in page
+    assert "ELEGOO PETG-GF Black" in page and "Shelf A" in page and "994 g" in page
+    assert "✓ #52" in page and "990 g in Spoolman" in page
+    assert "ELEGOO PLA Galaxy" in page and "250 g" in page
+    assert f'name="uuid" value="{other}"' in page
+    assert f'name="uuid" value="{WAREHOUSE_UUID}"' not in page
+    assert "Empty spools (1)" in page and "ELEGOO Old ASA" in page
+    # Two spools left: 994 g + 250 g. The empty one is not counted.
+    assert "1.2 kg" in page
+    assert re.search(r'Not linked</span>\s*<strong>1</strong>', page)
+    assert spoolman_writes(respx_mock) == []
+
+
+@respx.mock(assert_all_called=False)
+def test_warehouse_page_shows_a_loaded_spool_in_its_printer(respx_mock, tmp_path):
+    service = warehouse_service(respx_mock, tmp_path, spools=[SPOOL], printer_data=printer(uuid=WAREHOUSE_UUID))
+    page = signed_in(service).get("/warehouse").text
+    assert "In Core" in page
+    assert "Link on the dashboard" in page
+    assert f'name="uuid" value="{WAREHOUSE_UUID}"' not in page
+
+
+@respx.mock(assert_all_called=False)
+def test_warehouse_page_lists_a_loaded_spool_that_is_not_in_the_warehouse(respx_mock, tmp_path):
+    service = warehouse_service(respx_mock, tmp_path, items=[], spools=[SPOOL], printer_data=printer())
+    page = signed_in(service).get("/warehouse").text
+    assert "Not in Warehouse" in page and "In Core" in page
+
+
+@respx.mock(assert_all_called=False)
+def test_warehouse_page_still_works_without_spoolman(respx_mock, tmp_path):
+    service = warehouse_service(respx_mock, tmp_path)
+    respx_mock.get(url__startswith=f"{SPOOLMAN}/api/v1/spool?").respond(500)
+    page = signed_in(service).get("/warehouse").text
+    assert "links are not shown" in page
+    assert "ELEGOO PETG-GF Black" in page
+    assert 'name="uuid"' not in page
+
+
+@respx.mock(assert_all_called=False)
+def test_warehouse_page_reports_a_failed_read(respx_mock, tmp_path):
+    page = signed_in(warehouse_service(respx_mock, tmp_path, items=RuntimeError())).get("/warehouse").text
+    assert "Could not read the Connect warehouse" in page
+
+
+@respx.mock(assert_all_called=False)
+def test_warehouse_read_now_asks_for_a_new_read(respx_mock, tmp_path):
+    service = warehouse_service(respx_mock, tmp_path)
+    client = signed_in(service)
+    service.warehouse_due = time.time() + 999
+    response = client.post("/warehouse/refresh")
+    assert response.status_code == 302 and response.headers["Location"].endswith("/warehouse")
+    assert service.warehouse_due == 0.0
