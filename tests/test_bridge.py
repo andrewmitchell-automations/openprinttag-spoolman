@@ -17,6 +17,7 @@ from bridge.sync import (
     color_hex,
     consumption_step,
     fill_from_warehouse,
+    parse_warehouse_items,
     index_spools,
     parse_loaded_spools,
     build_link_changes,
@@ -660,7 +661,8 @@ def test_more_usage_in_spoolman_keeps_its_value_by_default(used, checked, noted)
 
 def test_filament_changes_are_off_when_the_filament_is_shared():
     changes = build_link_changes(loaded_spool(), SPOOL_52, 2)
-    assert all(c["checked"] is False for c in changes if c["target"] == "filament")
+    assert all(c["checked"] is False for c in changes if c["target"] == "filament" and c["key"] != "filament_material")
+    assert next(c for c in changes if c["key"] == "filament_material")["checked"] is True
     assert all(c["checked"] is True for c in changes if c["target"] == "spool")
 
 
@@ -835,3 +837,107 @@ def test_only_a_spool_that_used_the_warehouse_is_marked_as_a_warehouse_spool():
     loaded = parse_loaded_spools(warehouse_spool_printer())[0]
     assert loaded.from_warehouse is False
     assert fill_from_warehouse(loaded, WAREHOUSE_ITEM).from_warehouse is True
+
+
+def test_warehouse_items_become_spools_without_a_printer():
+    items = [
+        {**WAREHOUSE_ITEM, "location": "Shelf A", "materialPackageInstanceUuidSource": "generated"},
+        {**WAREHOUSE_ITEM, "archived": True},
+        {**WAREHOUSE_ITEM, "empty": True},
+        {"name": "No instance", "materialPackageInstance": None},
+    ]
+    [entry] = parse_warehouse_items(items)
+    assert entry["location"] == "Shelf A"
+    spool = entry["spool"]
+    assert (spool.uuid, spool.tool_id, spool.is_from_nfc, spool.from_warehouse) == ("custom", "", False, True)
+    assert spool.display_name == "ELEGOO PETG-GF Black"
+    assert spool.full_weight == 1000
+
+
+def test_a_warehouse_spool_read_from_a_tag_is_marked_as_nfc():
+    [entry] = parse_warehouse_items([{**WAREHOUSE_ITEM, "materialPackageInstanceUuidSource": "nfc"}])
+    assert entry["spool"].is_from_nfc is True
+
+
+def test_a_warehouse_spool_never_takes_over_another_spools_link():
+    [entry] = parse_warehouse_items([WAREHOUSE_ITEM])
+    assert can_replace_link(entry["spool"], "another-spool", set()) is False
+    taken = {"id": 7, "filament": {}, "extra": {"opt_instance_uuid": json.dumps("another-spool")}}
+    free = {"id": 8, "filament": {}, "extra": {}}
+    assert [c["id"] for c in rank_spools_for_link(entry["spool"], [taken, free])] == [8]
+
+
+def warehouse_link_change(filament, shared=0, item=WAREHOUSE_ITEM):
+    [entry] = parse_warehouse_items([item])
+    spool = {"id": 55, "filament": filament, "extra": {}}
+    return next((c for c in build_link_changes(entry["spool"], spool, shared) if c["key"] == "filament_material"), None)
+
+
+def test_linking_offers_a_missing_material_uuid_by_default():
+    assert warehouse_link_change({"id": 1, "extra": {}}, shared=3)["checked"] is True
+    assert warehouse_link_change({"id": 1, "extra": {}}, shared=0)["checked"] is True
+
+
+def test_linking_does_not_replace_another_material_uuid_on_a_shared_filament_by_default():
+    filament = {"id": 1, "extra": {"opt_material_uuid": json.dumps("other")}}
+    assert warehouse_link_change(filament, shared=3)["checked"] is False
+
+
+def test_linking_offers_nothing_when_the_material_uuid_already_matches():
+    assert warehouse_link_change({"id": 1, "extra": {"opt_material_uuid": json.dumps(MATERIAL_UUID)}}) is None
+
+
+def creation_mocks(mock, filaments, vendors=()):
+    mock_fields(mock)
+    mock.get(f"{SPOOLMAN}/api/v1/vendor").respond(json=list(vendors))
+    mock.get(f"{SPOOLMAN}/api/v1/filament").respond(json=filaments)
+    return mock.post(f"{SPOOLMAN}/api/v1/spool").respond(json={"id": 60})
+
+
+def warehouse_spool():
+    return parse_warehouse_items([WAREHOUSE_ITEM])[0]["spool"]
+
+
+@respx.mock(assert_all_called=False)
+def test_creating_reuses_the_filament_with_the_same_material_uuid(respx_mock, tmp_path):
+    other = {"id": 8, "name": "Another name", "vendor": {"id": 3, "name": "Another vendor"}, "extra": {"opt_material_uuid": json.dumps(MATERIAL_UUID)}}
+    spool = creation_mocks(respx_mock, [{"id": 9, "name": "PETG-GF Black", "vendor": {"id": 4}, "extra": {}}, other], [{"id": 4, "name": "ELEGOO"}])
+    make_bridge(tmp_path, printer()).bridge.create_spool(warehouse_spool(), "")
+    body = json.loads(spool.calls[0].request.content)
+    assert body["filament_id"] == 8
+    assert body["location"] is None
+    assert body["initial_weight"] == 1000
+    assert len(writes(respx_mock)) == 1
+
+
+@respx.mock(assert_all_called=False)
+def test_creating_falls_back_to_brand_and_name(respx_mock, tmp_path):
+    spool = creation_mocks(respx_mock, [{"id": 9, "name": "petg-gf black", "vendor": {"id": 4}, "extra": {}}], [{"id": 4, "name": "Elegoo"}])
+    make_bridge(tmp_path, printer()).bridge.create_spool(warehouse_spool(), "Shelf")
+    assert json.loads(spool.calls[0].request.content)["filament_id"] == 9
+    assert len(writes(respx_mock)) == 1
+
+
+@respx.mock(assert_all_called=False)
+def test_a_new_filament_gets_the_material_uuid(respx_mock, tmp_path):
+    creation_mocks(respx_mock, [], [{"id": 4, "name": "ELEGOO"}])
+    created = respx_mock.post(f"{SPOOLMAN}/api/v1/filament").respond(json={"id": 12})
+    make_bridge(tmp_path, printer()).bridge.create_spool(warehouse_spool(), "")
+    body = json.loads(created.calls[0].request.content)
+    assert extra_value(body, "opt_material_uuid") == MATERIAL_UUID
+    assert (body["name"], body["material"], body["density"], body["spool_weight"]) == ("PETG-GF Black", "PETG", 1.35, 220)
+
+
+@respx.mock(assert_all_called=False)
+def test_the_preview_finds_the_filament_by_material_uuid(respx_mock, tmp_path):
+    other = {"id": 8, "name": "Another name", "vendor": {"id": 3}, "extra": {"opt_material_uuid": json.dumps(MATERIAL_UUID)}}
+    creation_mocks(respx_mock, [other])
+    preview = make_bridge(tmp_path, printer()).bridge.create_preview(warehouse_spool())
+    assert preview == {"vendor_exists": True, "filament_exists": True}
+
+
+def test_warehouse_interval_setting(tmp_path):
+    assert load_settings({"DATA_DIR": str(tmp_path)}).warehouse_interval == 600
+    assert load_settings({"DATA_DIR": str(tmp_path), "WAREHOUSE_INTERVAL": "120"}).warehouse_interval == 120
+    with pytest.raises(ConfigError):
+        load_settings({"DATA_DIR": str(tmp_path), "WAREHOUSE_INTERVAL": "5"})

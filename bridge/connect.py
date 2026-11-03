@@ -94,6 +94,10 @@ query BridgeWarehouse($organizationId: String!, $first: Int, $after: String) {
         name
         consumedWeight
         nominalNettoFullWeight
+        empty
+        archived
+        location
+        materialPackageInstanceUuidSource
         materialPackageInstance {
           uuid
           actualNettoFullWeight

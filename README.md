@@ -53,6 +53,18 @@ In a dry run you can go through the same steps, and confirming shows the exact A
 
 Set `AUTO_CREATE` or turn it on in the settings to create unknown spools without asking.
 
+## Adding new spools
+
+Connect's Warehouse has a catalog of materials, so the easiest way to avoid entering a spool twice is to start there:
+
+1. Add the spool to Warehouse in the Prusa app or in Connect, preferably from the catalog.
+2. Write the tag from that warehouse spool in the Prusa app.
+3. The spool shows up under Warehouse on the dashboard, even before it is loaded. Link it to a Spoolman spool or create a new one, and review the changes as above.
+
+When creating a spool, the bridge reuses a filament with the same OpenPrintTag material, then one with the same brand and name, and otherwise creates a new filament. When linking, it offers to add the material to a filament that does not have one yet.
+
+The bridge only reads the warehouse. It never changes anything in Connect. `AUTO_CREATE` still applies only to spools loaded in a printer, so a spool that is only in the warehouse waits for your choice. Archived and empty spools are left out.
+
 ### Writing your own tags
 
 A tag written from the material form in the Prusa app can make a Core One say "The OpenPrintTag does not allow filament usage tracking". To avoid this, add the spool to Warehouse in the Prusa app and write that warehouse spool to the tag.
@@ -81,6 +93,7 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 | `CONNECT_PRINTER_UUID`, `CONNECT_ORGANIZATION_ID` | None | One printer, if you do not choose in the browser |
 | `LOCATION_NAME` | `Core One` | Location for the printer above |
 | `POLL_INTERVAL` | `60` | Seconds between polls |
+| `WAREHOUSE_INTERVAL` | `600` | Seconds between reading the Connect warehouse |
 | `DRY_RUN` | `true` | Dry-run mode |
 | `AUTO_CREATE` | `false` | Create unknown spools without asking |
 
@@ -108,6 +121,7 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 | ![Setting up the Connect login](docs/screenshots/setup-connect.png) | ![Choosing printers](docs/screenshots/setup-printers.png) |
 | ![Choosing how the bridge runs](docs/screenshots/setup-operation.png) | ![The dashboard in dark mode](docs/screenshots/dashboard-dark.png) |
 | ![The dashboard on a phone](docs/screenshots/dashboard-mobile.png) | ![The dashboard on a phone in dark mode](docs/screenshots/dashboard-mobile-dark.png) |
+| ![Warehouse spools waiting for a choice](docs/screenshots/warehouse.png) | ![Warehouse spools on a phone](docs/screenshots/warehouse-mobile.png) |
 
 ## Development
 

@@ -2,7 +2,7 @@
 {% block title %}Review new spool{% endblock %}
 {% block main %}
 <h1>Review the new spool</h1>
-<p class="lead">Create a Spoolman spool for the {{ loaded.brand }} {{ loaded.material_name }} in tool {{ loaded.tool_id }}. Nothing has been written yet.</p>
+<p class="lead">Create a Spoolman spool for the {{ loaded.brand }} {{ loaded.material_name }}{% if loaded.tool_id %} in tool {{ loaded.tool_id }}{% endif %}. Nothing has been written yet.</p>
 <div class="card panel">
 <table class="compare">
   <tbody>
