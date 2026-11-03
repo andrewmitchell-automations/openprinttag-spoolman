@@ -2,59 +2,68 @@
 {% from "_spool.html" import spool_graphic, swatch, link_form %}
 {% block title %}Warehouse{% endblock %}
 
-{% macro row(r) %}
+{% macro row(r, tools=true) %}
 {% set spool = r.spool %}
 {% set state = 'loaded' if r.printer else 'stored' %}
-<li class="inv-row{{ ' inv-empty' if r.empty }}"
+{% set form_id = 'link-' ~ spool.uuid %}
+<tr class="inv-row{{ ' inv-empty' if r.empty }}"
     data-state="{{ state }} {{ 'linked' if r.linked else ('unlinked' if overview.links_known else '') }}"
+    data-id="{{ r.linked.id if r.linked else 999999 }}"
+    data-name="{{ spool.display_name|lower }}"
     data-material="{{ spool.material_type or 'Unknown' }}"
     data-left="{{ spool.remaining_weight if spool.remaining_weight is not none else -1 }}"
-    data-name="{{ spool.display_name|lower }}"
+    data-used="{{ spool.consumed_weight or 0 }}"
     data-where="{{ (r.printer or r.location or '~')|lower }}"
+    data-spoolman="{{ r.linked.remaining if r.linked and r.linked.remaining is not none else -1 }}"
     data-search="{{ spool.display_name }} {{ spool.material_type or '' }} {{ spool.color_hex or '' }} {{ r.printer or '' }} {{ r.location }}{% if r.linked %} #{{ r.linked.id }}{% endif %}">
-  <div class="inv-spool">{{ spool_graphic(spool) }}</div>
-  <div class="inv-name">
-    <h3>{{ spool.display_name }}{% if spool.is_from_nfc %} <span class="badge">NFC</span>{% endif %}{% if not r.in_warehouse %} <span class="badge">Not in Warehouse</span>{% endif %}</h3>
-    <p class="subline">{% if spool.material_type %}{{ spool.material_type }}{% endif %}{% if spool.color_hex %} · #{{ spool.color_hex }}{% endif %}{% if spool.filament_diameter %} · {{ spool.filament_diameter }} mm{% endif %}</p>
-  </div>
-  <div class="inv-left">
-    {% if spool.remaining_weight is none %}
-    <span class="hint">Weight unknown</span>
-    {% else %}
-    <p class="inv-grams"><strong>{{ spool.remaining_weight|grams }}</strong> / {{ (spool.nominal_weight or spool.actual_weight)|grams }}</p>
-    <svg class="bar" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label="{{ (spool.remaining_fraction * 100)|round|int }} percent left">
+  <td class="col-id">
+    {% if r.linked %}<a class="linked" href="{{ r.linked.url }}" title="Open spool {{ r.linked.id }} in Spoolman">{{ r.linked.id }}</a>
+    {% elif r.candidates is defined %}<a class="link-action" href="#{{ form_id }}" data-link-toggle="{{ form_id }}" aria-expanded="false">Link</a>
+    {% elif r.printer and overview.links_known %}<a class="link-action" href="{{ url_for('dashboard') }}" title="Link it on the dashboard">Link</a>
+    {% else %}<span class="hint">–</span>{% endif %}
+  </td>
+  <td class="col-name">
+    <span class="filament">{{ swatch('#' ~ spool.color_hex if spool.color_hex else '') }}<span>{{ spool.brand or 'Unknown brand' }} – {{ spool.material_name or spool.material_type or 'unknown material' }}</span>{% if spool.is_from_nfc %} <span class="badge">NFC</span>{% endif %}{% if not r.in_warehouse %} <span class="badge">Not in Warehouse</span>{% endif %}</span>
+  </td>
+  <td class="col-material">{{ spool.material_type or '–' }}</td>
+  <td class="col-left num">
+    {% if spool.remaining_weight is none %}<span class="hint">Unknown</span>{% else %}
+    {{ spool.remaining_weight|grams }}
+    <svg class="bar mini" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label="{{ (spool.remaining_fraction * 100)|round|int }} percent left">
       <rect class="bar-track" width="100" height="8"></rect>
       <rect width="{{ (spool.remaining_fraction * 100)|round(1) }}" height="8" fill="#{{ spool.color_hex or '8A97A3' }}"></rect>
-    </svg>
-    {% endif %}
-  </div>
-  <div class="inv-where">
-    {% if r.printer %}<span class="pill state-printing">In {{ r.printer }}</span>
-    {% elif r.location %}<span>{{ r.location }}</span>
-    {% else %}<span class="hint">No location</span>{% endif %}
-  </div>
-  <div class="inv-link">
-    {% if r.linked %}
-    <a class="linked" href="{{ r.linked.url }}">✓ #{{ r.linked.id }}</a>
-    {% if r.linked.remaining is not none %}<span class="hint">{{ r.linked.remaining|grams }} in Spoolman</span>{% endif %}
-    {% elif not overview.links_known %}
-    <span class="hint">Unknown</span>
-    {% elif r.empty %}
-    <span class="hint">Not linked</span>
-    {% elif r.printer %}
-    <span class="pill pill-attention">Not linked</span>
-    <a class="hint" href="{{ url_for('dashboard') }}">Link on the dashboard</a>
-    {% else %}
-    <span class="pill pill-attention">Not linked</span>
-    {% endif %}
-  </div>
-  {% if r.candidates is defined %}
-  <details class="inv-choose">
-    <summary>Link to a Spoolman spool</summary>
-    <div class="unlinked">{{ link_form(spool, r.candidates) }}</div>
-  </details>
-  {% endif %}
-</li>
+    </svg>{% endif %}
+  </td>
+  <td class="col-used num">{{ spool.consumed_weight|grams if spool.consumed_weight is not none else '–' }}</td>
+  <td class="col-where">{% if r.printer %}<span class="pill state-printing">{{ r.printer }}</span>{% elif r.location %}{{ r.location }}{% else %}<span class="hint">–</span>{% endif %}</td>
+  <td class="col-spoolman num">
+    {% if r.linked %}{{ r.linked.remaining|grams if r.linked.remaining is not none else '–' }}
+    {% elif not overview.links_known %}<span class="hint">Unknown</span>
+    {% else %}<span class="pill pill-attention">Not linked</span>{% endif %}
+  </td>
+</tr>
+{% if r.candidates is defined %}
+<tr class="inv-form" id="{{ form_id }}" data-form-for>
+  <td colspan="7"><div class="unlinked">{{ link_form(spool, r.candidates) }}</div></td>
+</tr>
+{% endif %}
+{% endmacro %}
+
+{% macro table(rows, sortable) %}
+<div class="table-scroll">
+<table class="inv-table">
+  <thead>
+    <tr>
+      {% for key, label, cls in [('id', 'ID', 'col-id'), ('name', 'Filament', 'col-name'), ('material', 'Material', 'col-material'), ('left', 'Remaining', 'col-left num'), ('used', 'Used', 'col-used num'), ('where', 'Location', 'col-where'), ('spoolman', 'In Spoolman', 'col-spoolman num')] %}
+      <th class="{{ cls }}" scope="col">{% if sortable %}<button type="button" class="sort-head" data-sort="{{ key }}">{{ label }}<span class="sort-mark" aria-hidden="true"></span></button>{% else %}{{ label }}{% endif %}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody{% if sortable %} data-inventory{% endif %}>
+    {% for r in rows %}{{ row(r) }}{% endfor %}
+  </tbody>
+</table>
+</div>
 {% endmacro %}
 
 {% block main %}
@@ -98,15 +107,6 @@
     <button type="button" class="segment" data-show="stored" aria-pressed="false">Stored</button>
     {% if overview.links_known %}<button type="button" class="segment" data-show="unlinked" aria-pressed="false">Not linked</button>{% endif %}
   </div>
-  <label class="sort">Sort
-    <select data-inventory-sort>
-      <option value="where">Where</option>
-      <option value="material">Material</option>
-      <option value="least">Least left</option>
-      <option value="most">Most left</option>
-      <option value="name">Name</option>
-    </select>
-  </label>
 </div>
 {% if overview.materials|length > 1 %}
 <div class="materials" data-inventory-tools hidden role="group" aria-label="Material">
@@ -117,12 +117,7 @@
 {% endif %}
 
 <section class="card inventory">
-  <div class="inv-head" aria-hidden="true">
-    <span></span><span>Spool</span><span>Left</span><span>Where</span><span>Spoolman</span>
-  </div>
-  <ul class="inv-list" data-inventory>
-    {% for r in active %}{{ row(r) }}{% endfor %}
-  </ul>
+  {{ table(active, true) }}
   <p class="empty" data-inventory-none hidden>No spools match.</p>
 </section>
 {% elif not overview.error %}
@@ -132,9 +127,7 @@
 {% if empty %}
 <details class="card inventory empty-spools">
   <summary>Empty spools ({{ empty|length }})</summary>
-  <ul class="inv-list">
-    {% for r in empty %}{{ row(r) }}{% endfor %}
-  </ul>
+  {{ table(empty, false) }}
 </details>
 {% endif %}
 {% endblock %}

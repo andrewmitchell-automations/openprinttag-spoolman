@@ -63,7 +63,7 @@ Connect's Warehouse has a catalog of materials, so the easiest way to avoid ente
 
 When creating a spool, the bridge reuses a filament with the same OpenPrintTag material, then one with the same brand and name, and otherwise creates a new filament. When linking, it offers to add the material to a filament that does not have one yet.
 
-The Warehouse page lists every spool in the Connect warehouse, plus spools loaded in a printer that are not in it: material, color, filament left, where it is and which Spoolman spool it is linked to, with Spoolman's own weight next to it. The totals at the top count the filament left per material. You can search, filter by printer, shelf, link state or material, sort by what is left, and link a spool that is not linked yet. Empty spools are listed at the bottom.
+The Warehouse page lists every spool in the Connect warehouse, plus spools loaded in a printer that are not in it: material, color, filament left, where it is and which Spoolman spool it is linked to, with Spoolman's own weight next to it. The totals at the top count the filament left per material. It is a compact table like the spool list in Spoolman: click a column header to sort, search, filter by printer, shelf, link state or material, and link a spool that is not linked yet. Empty spools are listed at the bottom.
 
 The bridge only reads the warehouse. It never changes anything in Connect. `AUTO_CREATE` still applies only to spools loaded in a printer, so a spool that is only in the warehouse waits for your choice. Archived spools are left out, and empty spools are only listed on the Warehouse page.
 

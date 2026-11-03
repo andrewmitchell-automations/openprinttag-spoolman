@@ -671,12 +671,13 @@ def test_warehouse_page_lists_every_spool_with_its_link(respx_mock, tmp_path):
     client = signed_in(warehouse_service(respx_mock, tmp_path, items=items, spools=[linked]))
     page = client.get("/warehouse").text
     assert 'href="/warehouse" aria-current=page' in page
-    assert "ELEGOO PETG-GF Black" in page and "Shelf A" in page and "994 g" in page
-    assert "✓ #52" in page and "990 g in Spoolman" in page
-    assert "ELEGOO PLA Galaxy" in page and "250 g" in page
+    assert "ELEGOO – PETG-GF Black" in page and "Shelf A" in page and "994 g" in page
+    assert 'title="Open spool 52 in Spoolman">52</a>' in page and "990 g" in page
+    assert "ELEGOO – PLA Galaxy" in page and "250 g" in page
+    assert 'data-link-toggle="link-9f1c2d3e-0000-5000-8000-000000000003"' in page
     assert f'name="uuid" value="{other}"' in page
     assert f'name="uuid" value="{WAREHOUSE_UUID}"' not in page
-    assert "Empty spools (1)" in page and "ELEGOO Old ASA" in page
+    assert "Empty spools (1)" in page and "ELEGOO – Old ASA" in page
     # Two spools left: 994 g + 250 g. The empty one is not counted.
     assert "1.2 kg" in page
     assert re.search(r'Not linked</span>\s*<strong>1</strong>', page)
@@ -687,8 +688,8 @@ def test_warehouse_page_lists_every_spool_with_its_link(respx_mock, tmp_path):
 def test_warehouse_page_shows_a_loaded_spool_in_its_printer(respx_mock, tmp_path):
     service = warehouse_service(respx_mock, tmp_path, spools=[SPOOL], printer_data=printer(uuid=WAREHOUSE_UUID))
     page = signed_in(service).get("/warehouse").text
-    assert "In Core" in page
-    assert "Link on the dashboard" in page
+    assert '<span class="pill state-printing">Core</span>' in page
+    assert 'title="Link it on the dashboard"' in page
     assert f'name="uuid" value="{WAREHOUSE_UUID}"' not in page
 
 
@@ -696,7 +697,7 @@ def test_warehouse_page_shows_a_loaded_spool_in_its_printer(respx_mock, tmp_path
 def test_warehouse_page_lists_a_loaded_spool_that_is_not_in_the_warehouse(respx_mock, tmp_path):
     service = warehouse_service(respx_mock, tmp_path, items=[], spools=[SPOOL], printer_data=printer())
     page = signed_in(service).get("/warehouse").text
-    assert "Not in Warehouse" in page and "In Core" in page
+    assert "Not in Warehouse" in page and '<span class="pill state-printing">Core</span>' in page
 
 
 @respx.mock(assert_all_called=False)
@@ -705,7 +706,7 @@ def test_warehouse_page_still_works_without_spoolman(respx_mock, tmp_path):
     respx_mock.get(url__startswith=f"{SPOOLMAN}/api/v1/spool?").respond(500)
     page = signed_in(service).get("/warehouse").text
     assert "links are not shown" in page
-    assert "ELEGOO PETG-GF Black" in page
+    assert "ELEGOO – PETG-GF Black" in page
     assert 'name="uuid"' not in page
 
 
