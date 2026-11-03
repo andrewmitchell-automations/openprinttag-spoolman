@@ -255,7 +255,13 @@ def create_app(service: Service) -> Flask:
             return redirect(url_for("setup", step=step))
         printers = []
         problems = []
+        warehouse = None
         with service.lock:
+            try:
+                spools = service.list_spools()
+            except Exception as e:
+                problems.append(f"Could not read spools from Spoolman: {e}")
+                spools = None
             for config in service.settings.enabled_printers:
                 entry = dict(service.status.get(config.uuid) or {})
                 entry["config"] = config
@@ -265,16 +271,16 @@ def create_app(service: Service) -> Flask:
                     if tool["spool_id"]:
                         view["url"] = service.spoolman.spool_url(tool["spool_id"])
                     else:
-                        try:
-                            view["candidates"] = service.link_candidates(tool["spool"])
-                        except Exception as e:
-                            problems.append(f"Could not read spools from Spoolman: {e}")
-                            view["candidates"] = []
+                        view["candidates"] = service.link_candidates(tool["spool"], spools or [])
                     tools.append(view)
                 entry["tools"] = tools
                 printers.append(entry)
-        needs_choice = any("candidates" in tool for printer in printers for tool in printer["tools"])
-        return render_template("dashboard.html", printers=printers, problems=problems, token=service.token_status(), needs_choice=needs_choice)
+            if spools is not None:
+                warehouse = service.warehouse_view(spools)
+                for entry in warehouse["unlinked"]:
+                    entry["candidates"] = service.link_candidates(entry["spool"], spools)
+        needs_choice = any("candidates" in tool for printer in printers for tool in printer["tools"]) or bool(warehouse and warehouse["unlinked"])
+        return render_template("dashboard.html", printers=printers, problems=problems, token=service.token_status(), needs_choice=needs_choice, warehouse=warehouse)
 
     @app.get("/logs")
     def logs():
@@ -282,7 +288,7 @@ def create_app(service: Service) -> Flask:
 
     @app.post("/poll")
     def poll_now():
-        service.wake.set()
+        service.refresh_warehouse_soon()
         flash("Polling the printers now. Reload this page in a moment.", "ok")
         return redirect(url_for("dashboard"))
 
@@ -456,6 +462,7 @@ def create_app(service: Service) -> Flask:
     def _post_mode():
         try:
             poll_interval = max(10, int(request.form.get("poll_interval", "60")))
+            warehouse_interval = max(60, int(request.form.get("warehouse_interval", "600")))
         except ValueError:
             flash("Enter the interval as a whole number of seconds.", "error")
             return None
@@ -465,6 +472,7 @@ def create_app(service: Service) -> Flask:
                 "dry_run": request.form.get("dry_run") == "on",
                 "auto_create": request.form.get("auto_create") == "on",
                 "poll_interval": poll_interval,
+                "warehouse_interval": warehouse_interval,
             },
         )
         flash("Saved.", "ok")

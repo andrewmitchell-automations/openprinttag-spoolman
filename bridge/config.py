@@ -58,6 +58,7 @@ class Settings:
     spoolman_ca_bundle: str | None = None
     spoolman_verify_tls: bool = True
     poll_interval: int = 60
+    warehouse_interval: int = 600
     dry_run: bool = True
     auto_create: bool = False
     printers: tuple[PrinterConfig, ...] = ()
@@ -144,16 +145,20 @@ def load_settings(env: dict | None = None) -> Settings:
 
     try:
         poll_interval = int(value("poll_interval", "POLL_INTERVAL") or 60)
+        warehouse_interval = int(value("warehouse_interval", "WAREHOUSE_INTERVAL") or 600)
         web_port = int(env.get("WEB_PORT") or DEFAULT_WEB_PORT)
     except (TypeError, ValueError) as e:
-        raise ConfigError("POLL_INTERVAL and WEB_PORT must be whole numbers") from e
+        raise ConfigError("POLL_INTERVAL, WAREHOUSE_INTERVAL and WEB_PORT must be whole numbers") from e
     if poll_interval < 10:
         raise ConfigError("POLL_INTERVAL must be at least 10 seconds")
+    if warehouse_interval < 60:
+        raise ConfigError("WAREHOUSE_INTERVAL must be at least 60 seconds")
     return Settings(
         spoolman_url=(value("spoolman_url", "SPOOLMAN_URL") or "").rstrip("/"),
         spoolman_ca_bundle=value("spoolman_ca_bundle", "SPOOLMAN_CA_BUNDLE") or None,
         spoolman_verify_tls=_flag(value("spoolman_verify_tls", "SPOOLMAN_VERIFY_TLS"), "SPOOLMAN_VERIFY_TLS", True),
         poll_interval=poll_interval,
+        warehouse_interval=warehouse_interval,
         dry_run=_flag(value("dry_run", "DRY_RUN"), "DRY_RUN", True),
         auto_create=_flag(value("auto_create", "AUTO_CREATE"), "AUTO_CREATE", False),
         printers=_config_printers(config["printers"]) if "printers" in config else _env_printers(env),

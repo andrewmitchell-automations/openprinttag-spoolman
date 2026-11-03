@@ -260,6 +260,15 @@ h3 { margin: 0; font-size: 1.13rem; font-weight: 600; }
 .confidence-medium { color: var(--amber-text); }
 .confidence-low { color: var(--mute); }
 
+/* The Connect warehouse */
+.warehouse-spool, .warehouse > .warehouse-row { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--line); }
+.warehouse-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem 0.6rem; }
+summary.warehouse-row { cursor: pointer; }
+.warehouse-row .swatch { margin-top: 0; }
+.warehouse-name { font-weight: 600; overflow-wrap: anywhere; }
+.warehouse-row .hint { margin-left: auto; }
+.pill-attention { background: var(--callout); color: var(--amber-text); }
+
 /* Recent actions */
 .actions { margin-top: 1.25rem; padding-top: 0.75rem; border-top: 1px solid var(--line); color: var(--mute); font-size: 0.93rem; }
 .actions ul { margin: 0.5rem 0 0; padding-left: 1.25rem; }
@@ -351,6 +360,7 @@ details > label, details > .hint { margin-top: 0.75rem; }
   .panel { padding: 1rem; }
   .printer { padding: 1rem; }
   .card-meta { flex-basis: 100%; margin-left: 0; }
+  .warehouse-row .hint { flex-basis: 100%; margin-left: 0; }
   .tool-head { grid-template-columns: 64px minmax(0, 1fr); }
   .remaining { grid-column: 1 / -1; margin-top: 0.5rem; text-align: left; }
   .unlinked { padding: 0.75rem; }

@@ -11,6 +11,7 @@ import respx
 from bridge.config import read_config
 from bridge.connect import Tokens
 from bridge.service import Service
+from bridge.spoolman import extra_value
 from bridge.web import LoginNonces, bookmarklet, create_app
 from tests.test_bridge import GRAPHQL, SPOOLMAN, UUID, make_jwt, mock_fields, printer
 
@@ -487,3 +488,162 @@ def test_another_spool_list_is_sorted_by_id_and_searchable(respx_mock, tmp_path)
     assert re.findall(r'<option value="(\d+)"', listed) == ["3", "7", "52"]
     assert 'data-search="#7 eSun Pink (PLA, 1 g) #FF6762"' in listed
     assert "data-spool-filter" in page
+
+
+# The Connect warehouse
+
+WAREHOUSE_UUID = "9f1c2d3e-0000-5000-8000-000000000001"
+# The shape from research, with made-up identifiers.
+WAREHOUSE_ITEMS = [
+    {
+        "name": "PETG-GF Black",
+        "consumedWeight": 6,
+        "nominalNettoFullWeight": 1000,
+        "empty": False,
+        "archived": False,
+        "location": "Shelf A",
+        "materialPackageInstanceUuidSource": "generated",
+        "materialPackageInstance": {
+            "uuid": WAREHOUSE_UUID,
+            "actualNettoFullWeight": None,
+            "package": {
+                "filamentDiameter": 1.75,
+                "container": {"emptyWeight": 220},
+                "material": {
+                    "uuid": "9f1c2d3e-0000-5000-8000-000000000002",
+                    "type": "PETG",
+                    "primaryColor": {"colorRgba": "#101010"},
+                    "properties": {"density": 1.35},
+                    "brand": {"name": "ELEGOO"},
+                },
+            },
+        },
+    }
+]
+
+
+def warehouse_service(respx_mock, tmp_path, items=None, spools=None, printer_data=None, **env):
+    reads = []
+
+    def answer(request):
+        body = json.loads(request.content)
+        if "BridgeWarehouse" in body["query"]:
+            reads.append(body["variables"]["organizationId"])
+            if isinstance(items, Exception):
+                return respx.MockResponse(500)
+            page = {"pageInfo": {"hasNextPage": False}, "nodes": WAREHOUSE_ITEMS if items is None else items}
+            return respx.MockResponse(json={"data": {"warehouse": {"items": page}}})
+        data = printer_data or {**printer(), "fff": {"tools": []}}
+        return respx.MockResponse(json={"data": {"printer": {"printer": data}}})
+
+    respx_mock.post(GRAPHQL).mock(side_effect=answer)
+    mock_fields(respx_mock)
+    all_spools = [SPOOL] if spools is None else spools
+    respx_mock.get(url__startswith=f"{SPOOLMAN}/api/v1/spool?").respond(json=all_spools)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/52").respond(json=SPOOL)
+    respx_mock.get(f"{SPOOLMAN}/api/v1/vendor").respond(json=[])
+    respx_mock.get(f"{SPOOLMAN}/api/v1/filament").respond(json=[])
+    service = configured(tmp_path, **env)
+    assert service.poll_once() is True
+    service.warehouse_reads = reads
+    return service
+
+
+@respx.mock(assert_all_called=False)
+def test_dashboard_lists_an_unlinked_warehouse_spool_with_a_link_form(respx_mock, tmp_path):
+    page = signed_in(warehouse_service(respx_mock, tmp_path, DRY_RUN="false")).get("/").text
+    section = page[page.index("<h2>Warehouse</h2>"):]
+    assert "1 not linked" in section and "0 linked" in section
+    assert "ELEGOO PETG-GF Black" in section and "PETG" in section and "#101010" in section and "1000 g nominal" in section
+    assert f'name="uuid" value="{WAREHOUSE_UUID}"' in section
+    assert "#52 Prusament Blend Jet Black" in section
+    assert 'value="new"' in section
+    assert "data-spool-filter" in section
+    assert spoolman_writes(respx_mock) == []
+
+
+@respx.mock(assert_all_called=False)
+def test_a_linked_warehouse_spool_is_only_counted(respx_mock, tmp_path):
+    linked = {**SPOOL, "extra": {"opt_instance_uuid": json.dumps(WAREHOUSE_UUID)}}
+    page = signed_in(warehouse_service(respx_mock, tmp_path, spools=[linked])).get("/").text
+    section = page[page.index("<h2>Warehouse</h2>"):]
+    assert "0 not linked" in section and "1 linked" in section
+    assert "ELEGOO PETG-GF Black" not in section
+    assert 'http-equiv="refresh"' in page
+
+
+@respx.mock(assert_all_called=False)
+def test_a_warehouse_spool_in_a_printer_points_to_the_printer(respx_mock, tmp_path):
+    loaded = printer(uuid=WAREHOUSE_UUID)
+    service = warehouse_service(respx_mock, tmp_path, spools=[SPOOL], printer_data=loaded)
+    page = signed_in(service).get("/").text
+    section = page[page.index("<h2>Warehouse</h2>"):]
+    assert "Loaded in Core" in section
+    assert f'name="uuid" value="{WAREHOUSE_UUID}"' not in section
+
+
+@respx.mock(assert_all_called=False)
+def test_auto_create_does_not_create_a_spool_that_is_not_loaded(respx_mock, tmp_path):
+    warehouse_service(respx_mock, tmp_path, DRY_RUN="false", AUTO_CREATE="true")
+    assert spoolman_writes(respx_mock) == []
+
+
+@respx.mock(assert_all_called=False)
+def test_linking_a_warehouse_spool_writes_only_after_confirming(respx_mock, tmp_path):
+    patch = respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/52").respond(json={})
+    filament = respx_mock.patch(f"{SPOOLMAN}/api/v1/filament/49").respond(json={})
+    client = signed_in(warehouse_service(respx_mock, tmp_path, DRY_RUN="false"))
+    review = client.get("/spool/review", query_string={"uuid": WAREHOUSE_UUID, "choice": "52"}).text
+    assert "Review before linking" in review
+    assert "in tool" not in review
+    assert 'value="filament_material" aria-label="Apply Filament: OpenPrintTag material" checked' in review
+    assert spoolman_writes(respx_mock) == []
+    client.post("/spool/link", data={"uuid": WAREHOUSE_UUID, "spool_id": "52", "apply": ["filament_material"]})
+    assert extra_value(json.loads(patch.calls[0].request.content), "opt_instance_uuid") == WAREHOUSE_UUID
+    assert extra_value(json.loads(filament.calls[0].request.content), "opt_material_uuid") == "9f1c2d3e-0000-5000-8000-000000000002"
+
+
+@respx.mock(assert_all_called=False)
+def test_a_dry_run_shows_the_calls_for_a_warehouse_spool_without_making_them(respx_mock, tmp_path):
+    client = signed_in(warehouse_service(respx_mock, tmp_path))
+    linked = client.post("/spool/link", data={"uuid": WAREHOUSE_UUID, "spool_id": "52"}).text
+    assert "PATCH /spool/52" in linked
+    created = client.post("/spool/create", data={"uuid": WAREHOUSE_UUID, "name": "PETG-GF Black", "location": ""}).text
+    assert "POST /spool" in created and "POST /filament" in created
+    assert spoolman_writes(respx_mock) == []
+
+
+@respx.mock(assert_all_called=False)
+def test_the_create_review_for_a_warehouse_spool_uses_its_location(respx_mock, tmp_path):
+    client = signed_in(warehouse_service(respx_mock, tmp_path))
+    page = client.get("/spool/review", query_string={"uuid": WAREHOUSE_UUID, "choice": "new"}).text
+    assert "in tool" not in page
+    assert 'value="Shelf A"' in page
+    assert "1000 g filament" in page
+
+
+@respx.mock(assert_all_called=False)
+def test_the_warehouse_is_read_at_its_own_interval(respx_mock, tmp_path):
+    service = warehouse_service(respx_mock, tmp_path)
+    assert service.warehouse_reads == ["org-1"]
+    assert service.poll_once() is True
+    assert service.warehouse_reads == ["org-1"]
+    client = signed_in(service)
+    client.post("/poll")
+    assert service.poll_once() is True
+    assert service.warehouse_reads == ["org-1", "org-1"]
+
+
+@respx.mock(assert_all_called=False)
+def test_a_warehouse_failure_does_not_stop_the_poll(respx_mock, tmp_path):
+    service = warehouse_service(respx_mock, tmp_path, items=RuntimeError("down"))
+    page = signed_in(service).get("/").text
+    assert "Could not read the Connect warehouse" in page
+
+
+def test_the_warehouse_interval_can_be_saved(tmp_path):
+    service = make_service(tmp_path)
+    client = signed_in(service)
+    client.post("/setup/mode", data={"poll_interval": "60", "warehouse_interval": "900"})
+    assert read_config(tmp_path)["warehouse_interval"] == 900
+    assert service.settings.warehouse_interval == 900

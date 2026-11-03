@@ -3,13 +3,14 @@ because two simultaneous token refreshes could invalidate a rotated refresh toke
 
 import logging
 import threading
+import time
 from collections import deque
 from dataclasses import replace
 
 from .config import ConfigError, Settings, load_settings
 from .connect import ConnectAuthError, ConnectClient, TokenStore, Tokens, jwt_expiry
-from .spoolman import SpoolmanClient
-from .sync import Bridge, LoadedSpool, State, build_link_changes, rank_spools_for_link
+from .spoolman import SpoolmanClient, extra_value
+from .sync import SPOOL_UUID_FIELD, Bridge, LoadedSpool, State, build_link_changes, parse_warehouse_items, rank_spools_for_link
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +43,10 @@ class Service:
         self.status: dict[str, dict] = {}
         self.login_email: str | None = None
         self.last_auth_error: str | None = None
+        self.warehouse: list[dict] = []
+        self.warehouse_time: float | None = None
+        self.warehouse_error: str | None = None
+        self.warehouse_due = 0.0
         self.reload()
 
     def reload(self) -> None:
@@ -57,6 +62,7 @@ class Service:
                 self.config_error = str(e)
                 self.spoolman = None
             self.bridge = None
+            self.warehouse_due = 0.0
             if self.spoolman and self.connect:
                 state = State(self.settings.state_path, self.settings.dry_run)
                 self.bridge = Bridge(self.connect, self.spoolman, state, self.settings.auto_create)
@@ -126,7 +132,46 @@ class Service:
                 new = [a for a in self.spoolman.actions if a["time"] > before]
                 if new:
                     entry["actions"] = (entry["actions"] + new)[-10:]
+            self._refresh_warehouse()
             return ok
+
+    def _refresh_warehouse(self) -> None:
+        """Reads Connect only, and a failure here must not stop consumption tracking."""
+        now = time.time()
+        if now < self.warehouse_due:
+            return
+        self.warehouse_due = now + self.settings.warehouse_interval
+        spools = []
+        try:
+            for organization_id in sorted({p.organization_id for p in self.settings.enabled_printers}):
+                spools.extend(parse_warehouse_items(self.connect.warehouse_items(organization_id)))
+        except Exception as e:
+            self.warehouse_error = str(e)
+            log.warning("Could not read the Connect warehouse: %s", e)
+            return
+        self.warehouse = spools
+        self.warehouse_time = now
+        self.warehouse_error = None
+
+    def refresh_warehouse_soon(self) -> None:
+        self.warehouse_due = 0.0
+        self.wake.set()
+
+    def warehouse_view(self, spools: list[dict]) -> dict:
+        """Which warehouse spools still need a choice. Links are read from Spoolman each time, so this is never stale."""
+        linked = {extra_value(spool, SPOOL_UUID_FIELD) for spool in spools}
+        unlinked = [entry for entry in self.warehouse if entry["spool"].uuid not in linked]
+        printers = {
+            tool["spool"].uuid: entry.get("name") or entry["config"].name
+            for entry in self.status.values()
+            for tool in entry.get("tools", [])
+        }
+        return {
+            "unlinked": [{**entry, "printer": printers.get(entry["spool"].uuid)} for entry in unlinked],
+            "linked_count": len(self.warehouse) - len(unlinked),
+            "time": self.warehouse_time,
+            "error": self.warehouse_error,
+        }
 
     def _loop(self) -> None:
         failures = 0
@@ -161,6 +206,9 @@ class Service:
             for tool in entry.get("tools", []):
                 if tool["spool"].uuid == uuid:
                     return tool["spool"], entry["config"].location
+        for entry in self.warehouse:
+            if entry["spool"].uuid == uuid:
+                return entry["spool"], entry["location"]
         return None
 
     def _other_locations(self, loaded: LoadedSpool) -> tuple[str, ...]:
@@ -173,14 +221,18 @@ class Service:
     def _loaded_now(self) -> set[str]:
         return {tool["spool"].uuid for entry in self.status.values() for tool in entry.get("tools", [])}
 
-    def link_candidates(self, loaded: LoadedSpool) -> list[dict]:
+    def list_spools(self) -> list[dict]:
         with self.lock:
-            return rank_spools_for_link(loaded, self.spoolman.list_spools(), self._other_locations(loaded), self._loaded_now())
+            return self.spoolman.list_spools()
+
+    def link_candidates(self, loaded: LoadedSpool, spools: list[dict]) -> list[dict]:
+        with self.lock:
+            return rank_spools_for_link(loaded, spools, self._other_locations(loaded), self._loaded_now())
 
     def _loaded(self, uuid: str) -> tuple[LoadedSpool, str]:
         found = self.find_loaded(uuid)
         if not found:
-            raise ValueError("That spool is no longer loaded")
+            raise ValueError("That spool is no longer available")
         return found
 
     def link_review(self, uuid: str, spool_id: int) -> dict:

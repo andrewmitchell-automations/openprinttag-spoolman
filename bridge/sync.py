@@ -142,6 +142,33 @@ def fill_from_warehouse(loaded: LoadedSpool, item: dict) -> LoadedSpool:
     return replace(loaded, from_warehouse=True, **missing)
 
 
+def parse_warehouse_items(items: list[dict]) -> list[dict]:
+    """The spools in the Connect warehouse that are still in use, loaded in a printer or not."""
+    spools = []
+    for item in items:
+        uuid = (item.get("materialPackageInstance") or {}).get("uuid")
+        if not uuid or item.get("archived") or item.get("empty"):
+            continue
+        blank = LoadedSpool(
+            tool_id="",
+            uuid=uuid,
+            is_from_nfc=item.get("materialPackageInstanceUuidSource") == "nfc",
+            actual_weight=None,
+            consumed_weight=None,
+            nominal_weight=None,
+            empty_weight=None,
+            filament_diameter=None,
+            material_uuid=None,
+            material_name=None,
+            material_type=None,
+            brand=None,
+            color_hex=None,
+            density=None,
+        )
+        spools.append({"spool": fill_from_warehouse(blank, item), "location": item.get("location") or ""})
+    return spools
+
+
 def consumption_step(previous: float | None, current: float) -> tuple[str, float]:
     """Returns (action, weight to deduct), where action is baseline, none, use or rebase."""
     if previous is None:
@@ -279,8 +306,11 @@ def score_spool(loaded: LoadedSpool, spool: dict, other_locations: tuple[str, ..
 
 
 def can_replace_link(loaded: LoadedSpool, linked_to, loaded_now: set[str]) -> bool:
-    """A spool without an NFC reading can get a new ID each time it is loaded, so its old link may be stale."""
-    return bool(linked_to) and not loaded.is_from_nfc and linked_to not in loaded_now
+    """A spool without an NFC reading can get a new ID each time it is loaded, so its old link may be stale.
+
+    A warehouse spool keeps its ID, so it must never take over another spool's link.
+    """
+    return bool(linked_to) and not loaded.is_from_nfc and not loaded.from_warehouse and linked_to not in loaded_now
 
 
 def rank_spools_for_link(
@@ -310,7 +340,10 @@ def build_link_changes(loaded: LoadedSpool, spool: dict, shared: int) -> list[di
     """The rows on the review page. Filament changes are off if other spools share the filament."""
     filament = spool.get("filament") or {}
     # Without an NFC reading, Connect's material data may be generic, so it should not overwrite anything by default.
-    filament_on = shared == 0 and loaded.is_from_nfc
+    reliable = loaded.is_from_nfc or loaded.from_warehouse
+    filament_on = shared == 0 and reliable
+    # Without a material UUID, nothing can find this filament again, so setting one is safe even when it is shared.
+    material_on = filament_on or (reliable and extra_value(filament, FILAMENT_UUID_FIELD) is None)
     rows = [
         ("spool_instance", "spool", SPOOL_UUID_FIELD, "Link to this tag", extra_value(spool, SPOOL_UUID_FIELD), loaded.uuid, True),
         ("spool_initial_weight", "spool", "initial_weight", "Spool: filament weight", spool.get("initial_weight"), loaded.full_weight, loaded.actual_weight is not None),
@@ -320,7 +353,7 @@ def build_link_changes(loaded: LoadedSpool, spool: dict, shared: int) -> list[di
         ("filament_color_hex", "filament", "color_hex", "Filament: color", (filament.get("color_hex") or "").upper() or None, loaded.color_hex, filament_on),
         ("filament_weight", "filament", "weight", "Filament: nominal weight", filament.get("weight"), loaded.nominal_weight, filament_on),
         ("filament_spool_weight", "filament", "spool_weight", "Filament: empty weight", filament.get("spool_weight"), loaded.empty_weight, filament_on),
-        ("filament_material", "filament", FILAMENT_UUID_FIELD, "Filament: OpenPrintTag material", extra_value(filament, FILAMENT_UUID_FIELD), loaded.material_uuid, filament_on),
+        ("filament_material", "filament", FILAMENT_UUID_FIELD, "Filament: OpenPrintTag material", extra_value(filament, FILAMENT_UUID_FIELD), loaded.material_uuid, material_on),
     ]
     used = spool.get("used_weight")
     consumed = loaded.consumed_weight
@@ -624,13 +657,27 @@ class Bridge:
         if not self.spoolman.dry_run and extra_value(self.spoolman.get_spool(spool_id), SPOOL_UUID_FIELD):
             raise SpoolmanError(f"Spoolman kept the link on spool {spool_id}")
 
+    def _existing_filament(self, loaded: LoadedSpool) -> dict | None:
+        """The same OpenPrintTag material first, then the same brand and name."""
+        filaments = self.spoolman.list_filaments()
+        if loaded.material_uuid:
+            for filament in filaments:
+                if extra_value(filament, FILAMENT_UUID_FIELD) == loaded.material_uuid:
+                    return filament
+        vendor_id = self._existing_vendor_id(loaded)
+        name = (loaded.material_name or "").casefold()
+        for filament in filaments:
+            if vendor_id is not None and (filament.get("vendor") or {}).get("id") == vendor_id and (filament.get("name") or "").casefold() == name:
+                return filament
+        return None
+
+    def _existing_vendor_id(self, loaded: LoadedSpool) -> int | None:
+        brand = (loaded.brand or "").casefold()
+        return next((v["id"] for v in self.spoolman.list_vendors() if v["name"].casefold() == brand), None)
+
     def create_preview(self, loaded: LoadedSpool) -> dict:
-        vendor_id = next((v["id"] for v in self.spoolman.list_vendors() if v["name"].casefold() == (loaded.brand or "").casefold()), None)
-        filament_exists = vendor_id is not None and any(
-            (f.get("vendor") or {}).get("id") == vendor_id and (f.get("name") or "").casefold() == (loaded.material_name or "").casefold()
-            for f in self.spoolman.list_filaments()
-        )
-        return {"vendor_exists": vendor_id is not None, "filament_exists": filament_exists}
+        filament_exists = self._existing_filament(loaded) is not None
+        return {"vendor_exists": filament_exists or self._existing_vendor_id(loaded) is not None, "filament_exists": filament_exists}
 
     def create_spool(self, loaded: LoadedSpool, location: str) -> dict | None:
         self._ensure_extra_fields()
@@ -655,7 +702,7 @@ class Bridge:
                 "spool_weight": loaded.empty_weight,
                 # Filament used before the spool reached Spoolman, so remaining weight is right.
                 "used_weight": consumed,
-                "location": location,
+                "location": location or None,
                 "extra": {SPOOL_UUID_FIELD: encode_extra(loaded.uuid), CONSUMED_FIELD: encode_consumed(consumed)},
             }
         )
@@ -666,21 +713,18 @@ class Bridge:
         return created
 
     def _find_or_create_vendor(self, loaded: LoadedSpool) -> int | str:
-        for vendor in self.spoolman.list_vendors():
-            if vendor["name"].casefold() == loaded.brand.casefold():
-                return vendor["id"]
+        vendor_id = self._existing_vendor_id(loaded)
+        if vendor_id is not None:
+            return vendor_id
         created = self.spoolman.create_vendor({"name": loaded.brand})
         return created["id"] if created else "<id of new vendor>"
 
     def _find_or_create_filament(self, loaded: LoadedSpool) -> int | str:
+        existing = self._existing_filament(loaded)
+        if existing:
+            log.info("Using existing Spoolman filament %s", existing["id"])
+            return existing["id"]
         vendor_id = self._find_or_create_vendor(loaded)
-        for filament in self.spoolman.list_filaments():
-            if (
-                (filament.get("vendor") or {}).get("id") == vendor_id
-                and (filament.get("name") or "").casefold() == loaded.material_name.casefold()
-            ):
-                log.info("Using existing Spoolman filament %s", filament["id"])
-                return filament["id"]
         body = {
             "vendor_id": vendor_id,
             "name": loaded.material_name,

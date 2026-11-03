@@ -16,6 +16,48 @@
 <svg class="swatch" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="{{ color or 'none' }}"></circle></svg>
 {% endmacro %}
 
+{% macro link_form(spool, candidates) %}
+        {% set best = candidates|selectattr('best')|first %}
+        {% set suggestions = candidates|selectattr('suggested')|list or candidates|selectattr('score', 'gt', 0)|list %}
+        <form method="get" action="{{ url_for('review_choice') }}" class="stack wide">
+          <input type="hidden" name="uuid" value="{{ spool.uuid }}">
+          <fieldset class="choices">
+            <legend>Not linked yet. Pick the matching Spoolman spool:</legend>
+            {% for c in suggestions[:5] %}
+            <label class="choice">
+              <input type="radio" name="choice" value="{{ c.id }}" {{ 'checked' if c.best }} required>
+              {{ swatch(c.color) }}
+              <span class="choice-body">
+                <span class="choice-name">{{ c.label }}</span>
+                <span class="hint">{{ c.reasons|join(', ') }}</span>
+              </span>
+              <span class="confidence confidence-{{ c.confidence|lower }}">{{ 'High match' if c.confidence == 'High' else c.confidence }}</span>
+            </label>
+            {% endfor %}
+            <label class="choice">
+              <input type="radio" name="choice" value="other" required>
+              <span class="choice-body">
+                <span class="choice-name">Another spool</span>
+                <input type="search" data-spool-filter placeholder="Search by ID, name, brand or color" aria-label="Search for a spool" autocomplete="off" hidden>
+                <select name="other_spool" aria-label="Another spool">
+                  <option value="">Choose a spool</option>
+                  {% for c in candidates|sort(attribute='id') %}<option value="{{ c.id }}" data-search="{{ c.label }} {{ c.color }}">{{ c.label }}</option>{% endfor %}
+                </select>
+              </span>
+            </label>
+            {% if spool.can_create %}
+            <label class="choice">
+              <input type="radio" name="choice" value="new" {{ 'checked' if not best }} required>
+              <span class="choice-body"><span class="choice-name">Create a new spool</span></span>
+            </label>
+            {% endif %}
+          </fieldset>
+          <button>Review →</button>
+        </form>
+        <p class="hint">Consumption is not recorded until you confirm a choice. Nothing is written until you confirm on the next page.</p>
+        {% if not spool.is_from_nfc and not spool.from_warehouse %}<p class="hint">Connect did not report this spool as read from an NFC tag, so choose its Spoolman spool yourself. If it gets a new ID when loaded again, you need to link it again.</p>{% endif %}
+{% endmacro %}
+
 {% block main %}
 {% for problem in problems %}<p class="notice error">{{ problem }}</p>{% endfor %}
 
@@ -71,45 +113,7 @@
       </div>
       {% else %}
       <div class="unlinked">
-        {% set best = tool.candidates|selectattr('best')|first %}
-        {% set suggestions = tool.candidates|selectattr('suggested')|list or tool.candidates|selectattr('score', 'gt', 0)|list %}
-        <form method="get" action="{{ url_for('review_choice') }}" class="stack wide">
-          <input type="hidden" name="uuid" value="{{ spool.uuid }}">
-          <fieldset class="choices">
-            <legend>Not linked yet. Pick the matching Spoolman spool:</legend>
-            {% for c in suggestions[:5] %}
-            <label class="choice">
-              <input type="radio" name="choice" value="{{ c.id }}" {{ 'checked' if c.best }} required>
-              {{ swatch(c.color) }}
-              <span class="choice-body">
-                <span class="choice-name">{{ c.label }}</span>
-                <span class="hint">{{ c.reasons|join(', ') }}</span>
-              </span>
-              <span class="confidence confidence-{{ c.confidence|lower }}">{{ 'High match' if c.confidence == 'High' else c.confidence }}</span>
-            </label>
-            {% endfor %}
-            <label class="choice">
-              <input type="radio" name="choice" value="other" required>
-              <span class="choice-body">
-                <span class="choice-name">Another spool</span>
-                <input type="search" data-spool-filter placeholder="Search by ID, name, brand or color" aria-label="Search for a spool" autocomplete="off" hidden>
-                <select name="other_spool" aria-label="Another spool">
-                  <option value="">Choose a spool</option>
-                  {% for c in tool.candidates|sort(attribute='id') %}<option value="{{ c.id }}" data-search="{{ c.label }} {{ c.color }}">{{ c.label }}</option>{% endfor %}
-                </select>
-              </span>
-            </label>
-            {% if spool.can_create %}
-            <label class="choice">
-              <input type="radio" name="choice" value="new" {{ 'checked' if not best }} required>
-              <span class="choice-body"><span class="choice-name">Create a new spool</span></span>
-            </label>
-            {% endif %}
-          </fieldset>
-          <button>Review →</button>
-        </form>
-        <p class="hint">Consumption is not recorded until you confirm a choice. Nothing is written until you confirm on the next page.</p>
-        {% if not spool.is_from_nfc %}<p class="hint">Connect did not report this spool as read from an NFC tag, so choose its Spoolman spool yourself. If it gets a new ID when loaded again, you need to link it again.</p>{% endif %}
+        {{ link_form(spool, tool.candidates) }}
       </div>
       {% endif %}
   </article>
@@ -127,4 +131,36 @@
 {% else %}
 <p>No printers are selected. <a href="{{ url_for('setup', step='printers') }}">Choose printers</a>.</p>
 {% endfor %}
+
+{% if warehouse and (warehouse.unlinked or warehouse.linked_count or warehouse.error) %}
+<section class="card printer warehouse">
+  <header class="card-head">
+    <h2>Warehouse</h2>
+    <span class="pill{{ ' pill-attention' if warehouse.unlinked }}">{{ warehouse.unlinked|length }} not linked</span>
+    <p class="card-meta">{% if warehouse.time %}Read {{ (warehouse.time|clock)[:5] }} · {% endif %}{{ warehouse.linked_count }} linked</p>
+  </header>
+  {% if warehouse.error %}<p class="notice error">Could not read the Connect warehouse: {{ warehouse.error }}</p>{% endif %}
+  {% for entry in warehouse.unlinked %}
+  {% set spool = entry.spool %}
+  {% if entry.printer %}
+  <div class="warehouse-row">
+    {{ swatch('#' ~ spool.color_hex if spool.color_hex else '') }}
+    <span class="warehouse-name">{{ spool.display_name }}</span>
+    <span class="hint">Loaded in {{ entry.printer }}. Link it above.</span>
+  </div>
+  {% else %}
+  <details class="warehouse-spool">
+    <summary class="warehouse-row">
+      {{ swatch('#' ~ spool.color_hex if spool.color_hex else '') }}
+      <span class="warehouse-name">{{ spool.display_name }}{% if spool.is_from_nfc %} <span class="badge">NFC</span>{% endif %}</span>
+      <span class="hint">{% if spool.material_type %}{{ spool.material_type }} · {% endif %}{% if spool.color_hex %}#{{ spool.color_hex }} · {% endif %}{% if spool.nominal_weight is not none %}{{ spool.nominal_weight|grams }} nominal{% else %}Weight unknown{% endif %}</span>
+    </summary>
+    <div class="unlinked">
+      {{ link_form(spool, entry.candidates) }}
+    </div>
+  </details>
+  {% endif %}
+  {% endfor %}
+</section>
+{% endif %}
 {% endblock %}
