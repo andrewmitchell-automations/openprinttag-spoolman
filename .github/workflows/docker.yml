@@ -2,7 +2,7 @@ name: Docker image
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, development]
   pull_request:
   workflow_dispatch:
 
@@ -27,7 +27,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/development' }}
             type=sha,format=short
 
       - uses: docker/setup-qemu-action@v3
