@@ -127,14 +127,17 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 
 ## Screenshots
 
+The screenshots use made-up demo data.
+
 | | |
 |---|---|
+| ![The Warehouse page, a table of every spool Connect knows about](docs/screenshots/warehouse-page.png) | ![The Warehouse page on a phone](docs/screenshots/warehouse-page-mobile.png) |
 | ![Suggested matches for an unlinked spool](docs/screenshots/link-suggestion.png) | ![Reviewing a link before confirming](docs/screenshots/link-confirm.png) |
+| ![Warehouse spools waiting for a choice on the dashboard](docs/screenshots/warehouse.png) | ![Warehouse spools on a phone](docs/screenshots/warehouse-mobile.png) |
+| ![The dashboard in dark mode](docs/screenshots/dashboard-dark.png) | ![The dashboard on a phone](docs/screenshots/dashboard-mobile.png) |
+| ![The dashboard on a phone in dark mode](docs/screenshots/dashboard-mobile-dark.png) | ![Connecting to Spoolman](docs/screenshots/setup-spoolman.png) |
 | ![Setting up the Connect login](docs/screenshots/setup-connect.png) | ![Choosing printers](docs/screenshots/setup-printers.png) |
-| ![Choosing how the bridge runs](docs/screenshots/setup-operation.png) | ![The dashboard in dark mode](docs/screenshots/dashboard-dark.png) |
-| ![The dashboard on a phone](docs/screenshots/dashboard-mobile.png) | ![The dashboard on a phone in dark mode](docs/screenshots/dashboard-mobile-dark.png) |
-| ![Warehouse spools waiting for a choice](docs/screenshots/warehouse.png) | ![Warehouse spools on a phone](docs/screenshots/warehouse-mobile.png) |
-| ![The Warehouse page](docs/screenshots/warehouse-page.png) | ![The Warehouse page on a phone](docs/screenshots/warehouse-page-mobile.png) |
+| ![Choosing how the bridge runs](docs/screenshots/setup-operation.png) | |
 
 ## Development
 
