@@ -25,6 +25,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          labels: |
+            org.opencontainers.image.licenses=CC-BY-NC-SA-4.0
           tags: |
             type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/development' }}

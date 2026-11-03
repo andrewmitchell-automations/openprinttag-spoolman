@@ -1,6 +1,7 @@
 # OpenPrintTag Spoolman for Prusa Connect
 
 [![Tests](https://github.com/mathiasbk/openprinttag-spoolman/actions/workflows/tests.yml/badge.svg)](https://github.com/mathiasbk/openprinttag-spoolman/actions/workflows/tests.yml)
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](LICENSE)
 
 Sync OpenPrintTag spool data and filament usage from Prusa Connect to Spoolman.
 
@@ -147,4 +148,10 @@ python -m venv .venv
 
 ## License
 
-[MIT](LICENSE)
+Copyright (c) 2026 mathiasbk.
+
+This project is licensed under [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International](https://creativecommons.org/licenses/by-nc-sa/4.0/) (CC BY-NC-SA 4.0). See [LICENSE](LICENSE) for the full text.
+
+You may use, share and adapt it for non-commercial purposes, as long as you give credit and share your changes under the same license. Commercial use requires permission from the author.
+
+Releases up to and including v0.2.0 were published under the MIT license, and copies obtained under those releases keep those terms.
