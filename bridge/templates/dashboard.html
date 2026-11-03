@@ -38,6 +38,7 @@
     <p class="card-meta">{% if printer.time %}Read {{ (printer.time|clock)[:5] }}{% else %}Waiting for the first poll{% endif %}{% if printer.config.location %} · {{ printer.config.location }}{% endif %}</p>
   </header>
   {% if printer.error %}<p class="notice error">{{ printer.error }}</p>{% endif %}
+  {% for warning in printer.warnings or [] %}<p class="notice error">{{ warning }}</p>{% endfor %}
 
   {% for tool in printer.tools %}
   {% set spool = tool.spool %}

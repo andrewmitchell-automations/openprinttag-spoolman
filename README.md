@@ -51,7 +51,7 @@ Nothing is written until you confirm. The review page shows each change before a
 
 In a dry run you can go through the same steps, and confirming shows the exact API calls without making them. Linked spools can be unlinked from the dashboard.
 
-Set `AUTO_CREATE` or turn it on in the settings to create unknown spools without asking.
+Set `AUTO_CREATE` or turn it on in the settings to create unknown spools without asking. Before creating one, the bridge checks Spoolman for an unlinked spool that is very likely the same, for example one Spoolman 0.27 created when its own reader scanned the tag. If it finds one, it creates nothing and the dashboard asks you to link it instead. The dashboard also warns if more than one spool is linked to a loaded tag.
 
 ### Writing your own tags
 
@@ -62,10 +62,13 @@ A tag written from the material form in the Prusa app can make a Core One say "T
 | Consumption from Connect | What the bridge does |
 |---|---|
 | First time a linked spool is seen | Stores the value as a baseline and deducts nothing |
-| Higher than last time | Deducts the difference with `PUT /api/v1/spool/{id}/use` |
+| Higher than last time | Adds the difference to the spool's used weight |
+| More than a whole spool higher in one step | Deducts nothing, stores the new value and logs an error |
 | Lower than last time | Stores the new value and logs a warning |
 
-`data/state.json` is updated only after Spoolman has answered. A dry run stores only its first baseline, so what is used during the dry run is deducted when you turn writing on.
+The consumption a spool already accounts for is stored on the spool itself, in the extra field `opt_consumed_weight` ("OpenPrintTag consumed"). The used weight and this field are changed in the same request, after the bridge has read the spool again. A second bridge, a reinstall or a lost `data` folder therefore cannot deduct the same grams twice. Do not edit the field by hand unless you mean to change what gets deducted next.
+
+`data/state.json` keeps a local copy and is used for spools linked before the field existed. It is updated only after Spoolman has answered. A dry run stores only its first baseline, so what is used during the dry run is deducted when you turn writing on.
 
 ## Configuration
 
@@ -94,7 +97,7 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 
 ## Limitations
 
-- **One bridge per printer:** each bridge keeps its own record of what it has deducted, so two bridges watching the same printer deduct everything twice.
+- **One bridge per printer is still best:** two bridges no longer deduct the same grams twice, but they can still move a spool's location back and forth.
 - **Whole grams:** Connect reports consumption in whole grams, so small uses can show up a little late.
 - **Token renewal can still fail:** if Prusa rejects it, the dashboard says so and you need to log in again.
 - **Spools without a confirmed NFC reading:** Connect can report a spool, such as one with a custom tag, without marking it as read from NFC or including its name and brand. You can link it yourself, but it is never created automatically. Whether Connect keeps its ID and reports its consumption has not been verified.

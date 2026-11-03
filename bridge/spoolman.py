@@ -97,8 +97,8 @@ class SpoolmanClient:
     def extra_field_exists(self, entity_type: str, key: str) -> bool:
         return any(f.get("key") == key for f in self._read(f"/field/{entity_type}"))
 
-    def create_extra_field(self, entity_type: str, key: str, name: str) -> None:
-        self._write("POST", f"/field/{entity_type}/{key}", {"name": name, "field_type": "text"})
+    def create_extra_field(self, entity_type: str, key: str, name: str, field_type: str = "text") -> None:
+        self._write("POST", f"/field/{entity_type}/{key}", {"name": name, "field_type": field_type})
 
     def list_spools(self) -> list[dict]:
         return self._read("/spool?allow_archived=true")
