@@ -390,6 +390,7 @@ details > label, details > .hint { margin-top: 0.75rem; }
 .tile-attention { border-color: var(--callout-line); background: var(--callout); }
 .tile-attention strong { color: var(--amber-text); }
 
+.toolbar[hidden], .materials[hidden] { display: none; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 0.75rem; margin-bottom: 0.75rem; }
 .toolbar input[type="search"] { flex: 1 1 14rem; width: auto; }
 .segments { display: inline-flex; flex-wrap: wrap; padding: 3px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
