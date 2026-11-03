@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% from "_spool.html" import spool_graphic, swatch, link_form %}
+{% block title %}Warehouse{% endblock %}
+
+{% macro row(r, tools=true) %}
+{% set spool = r.spool %}
+{% set state = 'loaded' if r.printer else 'stored' %}
+{% set form_id = 'link-' ~ spool.uuid %}
+<tr class="inv-row{{ ' inv-empty' if r.empty }}"
+    data-state="{{ state }} {{ 'linked' if r.linked else ('unlinked' if overview.links_known else '') }}"
+    data-id="{{ r.linked.id if r.linked else 999999 }}"
+    data-name="{{ spool.display_name|lower }}"
+    data-material="{{ spool.material_type or 'Unknown' }}"
+    data-left="{{ spool.remaining_weight if spool.remaining_weight is not none else -1 }}"
+    data-used="{{ spool.consumed_weight or 0 }}"
+    data-where="{{ (r.printer or r.location or '~')|lower }}"
+    data-spoolman="{{ r.linked.remaining if r.linked and r.linked.remaining is not none else -1 }}"
+    data-search="{{ spool.display_name }} {{ spool.material_type or '' }} {{ spool.color_hex or '' }} {{ r.printer or '' }} {{ r.location }}{% if r.linked %} #{{ r.linked.id }}{% endif %}">
+  <td class="col-id">
+    {% if r.linked %}<a class="linked" href="{{ r.linked.url }}" title="Open spool {{ r.linked.id }} in Spoolman">{{ r.linked.id }}</a>
+    {% elif r.candidates is defined %}<a class="link-action" href="#{{ form_id }}" data-link-toggle="{{ form_id }}" aria-expanded="false">Link</a>
+    {% elif r.printer and overview.links_known %}<a class="link-action" href="{{ url_for('dashboard') }}" title="Link it on the dashboard">Link</a>
+    {% else %}<span class="hint">–</span>{% endif %}
+  </td>
+  <td class="col-name">
+    <span class="filament">{{ swatch('#' ~ spool.color_hex if spool.color_hex else '') }}<span>{{ spool.brand or 'Unknown brand' }} – {{ spool.material_name or spool.material_type or 'unknown material' }}</span>{% if spool.is_from_nfc %} <span class="badge">NFC</span>{% endif %}{% if not r.in_warehouse %} <span class="badge">Not in Warehouse</span>{% endif %}</span>
+  </td>
+  <td class="col-material">{{ spool.material_type or '–' }}</td>
+  <td class="col-left num">
+    {% if spool.remaining_weight is none %}<span class="hint">Unknown</span>{% else %}
+    {{ spool.remaining_weight|grams }}
+    <svg class="bar mini" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label="{{ (spool.remaining_fraction * 100)|round|int }} percent left">
+      <rect class="bar-track" width="100" height="8"></rect>
+      <rect width="{{ (spool.remaining_fraction * 100)|round(1) }}" height="8" fill="#{{ spool.color_hex or '8A97A3' }}"></rect>
+    </svg>{% endif %}
+  </td>
+  <td class="col-used num">{{ spool.consumed_weight|grams if spool.consumed_weight is not none else '–' }}</td>
+  <td class="col-where">{% if r.printer %}<span class="pill state-printing">{{ r.printer }}</span>{% elif r.location %}{{ r.location }}{% else %}<span class="hint">–</span>{% endif %}</td>
+  <td class="col-spoolman num">
+    {% if r.linked %}{{ r.linked.remaining|grams if r.linked.remaining is not none else '–' }}
+    {% elif not overview.links_known %}<span class="hint">Unknown</span>
+    {% else %}<span class="pill pill-attention">Not linked</span>{% endif %}
+  </td>
+</tr>
+{% if r.candidates is defined %}
+<tr class="inv-form" id="{{ form_id }}" data-form-for>
+  <td colspan="7"><div class="unlinked">{{ link_form(spool, r.candidates) }}</div></td>
+</tr>
+{% endif %}
+{% endmacro %}
+
+{% macro table(rows, sortable) %}
+<div class="table-scroll">
+<table class="inv-table">
+  <thead>
+    <tr>
+      {% for key, label, cls in [('id', 'ID', 'col-id'), ('name', 'Filament', 'col-name'), ('material', 'Material', 'col-material'), ('left', 'Remaining', 'col-left num'), ('used', 'Used', 'col-used num'), ('where', 'Location', 'col-where'), ('spoolman', 'In Spoolman', 'col-spoolman num')] %}
+      <th class="{{ cls }}" scope="col">{% if sortable %}<button type="button" class="sort-head" data-sort="{{ key }}">{{ label }}<span class="sort-mark" aria-hidden="true"></span></button>{% else %}{{ label }}{% endif %}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody{% if sortable %} data-inventory{% endif %}>
+    {% for r in rows %}{{ row(r) }}{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endmacro %}
+
+{% block main %}
+{% for problem in problems %}<p class="notice error">{{ problem }}</p>{% endfor %}
+
+<div class="title-row">
+  <h1>Warehouse</h1>
+  <form method="post" action="{{ url_for('refresh_warehouse') }}"><button class="quiet">↻ Read now</button></form>
+</div>
+<p class="hint page-meta">Every spool in the Prusa Connect warehouse, and spools loaded in a printer.{% if overview.time %} Read {{ (overview.time|clock)[:5] }}.{% endif %}</p>
+
+{% if overview.error %}<p class="notice error">Could not read the Connect warehouse: {{ overview.error }}</p>{% endif %}
+
+<ul class="tiles">
+  <li class="card tile">
+    <span class="tile-label">Spools</span>
+    <strong>{{ overview.active_count }}</strong>
+    <span class="hint">{{ overview.loaded_count }} in a printer</span>
+  </li>
+  <li class="card tile">
+    <span class="tile-label">Filament left</span>
+    <strong>{{ overview.remaining_total|kilograms }}</strong>
+    <span class="hint">{% if overview.unknown_weight_count %}{{ overview.unknown_weight_count }} with unknown weight{% else %}From Connect{% endif %}</span>
+  </li>
+  <li class="card tile{{ ' tile-attention' if overview.unlinked_count }}">
+    <span class="tile-label">Not linked</span>
+    <strong>{{ overview.unlinked_count if overview.unlinked_count is not none else '–' }}</strong>
+    <span class="hint">To Spoolman</span>
+  </li>
+</ul>
+
+{% set active = overview.rows|rejectattr('empty')|list %}
+{% set empty = overview.rows|selectattr('empty')|list %}
+
+{% if active %}
+<div class="toolbar" data-inventory-tools hidden>
+  <input type="search" data-inventory-search placeholder="Search name, color, location or #ID" aria-label="Search spools" autocomplete="off">
+  <div class="segments" role="group" aria-label="Show">
+    <button type="button" class="segment" data-show="" aria-pressed="true">All</button>
+    <button type="button" class="segment" data-show="loaded" aria-pressed="false">In a printer</button>
+    <button type="button" class="segment" data-show="stored" aria-pressed="false">Stored</button>
+    {% if overview.links_known %}<button type="button" class="segment" data-show="unlinked" aria-pressed="false">Not linked</button>{% endif %}
+  </div>
+</div>
+{% if overview.materials|length > 1 %}
+<div class="materials" data-inventory-tools hidden role="group" aria-label="Material">
+  {% for material, totals in overview.materials %}
+  <button type="button" class="chip" data-material="{{ material }}" aria-pressed="false">{{ material }} <span>{{ totals[0] }} · {{ totals[1]|kilograms }}</span></button>
+  {% endfor %}
+</div>
+{% endif %}
+
+<section class="card inventory">
+  {{ table(active, true) }}
+  <p class="empty" data-inventory-none hidden>No spools match.</p>
+</section>
+{% elif not overview.error %}
+<p class="empty">{% if overview.time %}The warehouse is empty and no spool is loaded.{% else %}The warehouse has not been read yet. Reload this page in a moment.{% endif %}</p>
+{% endif %}
+
+{% if empty %}
+<details class="card inventory empty-spools">
+  <summary>Empty spools ({{ empty|length }})</summary>
+  {{ table(empty, false) }}
+</details>
+{% endif %}
+{% endblock %}

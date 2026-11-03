@@ -27,11 +27,17 @@ The bridge starts in dry-run mode. It reads everything and shows what it would d
 
 ## Quick start
 
+The bridge runs from the image published with each [release](https://github.com/mathiasbk/openprinttag-spoolman/releases):
+
 ```
-git clone https://github.com/mathiasbk/openprinttag-spoolman.git
-cd openprinttag-spoolman
-docker compose up -d --build
+mkdir openprinttag-spoolman && cd openprinttag-spoolman
+curl -fsSLO https://raw.githubusercontent.com/mathiasbk/openprinttag-spoolman/main/docker-compose.yml
+docker compose up -d
 ```
+
+To update to the newest release later, run `docker compose pull && docker compose up -d` in the same folder. Your settings stay in `data/`. To stay on one version, put `BRIDGE_TAG=0.1.0` (or another version) in `.env`.
+
+To build from source instead, clone the repository and run `./setup.sh --build`.
 
 Open `http://your-server:7913` and follow the steps:
 
@@ -63,7 +69,9 @@ Connect's Warehouse has a catalog of materials, so the easiest way to avoid ente
 
 When creating a spool, the bridge reuses a filament with the same OpenPrintTag material, then one with the same brand and name, and otherwise creates a new filament. When linking, it offers to add the material to a filament that does not have one yet.
 
-The bridge only reads the warehouse. It never changes anything in Connect. `AUTO_CREATE` still applies only to spools loaded in a printer, so a spool that is only in the warehouse waits for your choice. Archived and empty spools are left out.
+The Warehouse page lists every spool in the Connect warehouse, plus spools loaded in a printer that are not in it: material, color, filament left, where it is and which Spoolman spool it is linked to, with Spoolman's own weight next to it. The totals at the top count the filament left per material. It is a compact table like the spool list in Spoolman: click a column header to sort, search, filter by printer, shelf, link state or material, and link a spool that is not linked yet. Empty spools are listed at the bottom.
+
+The bridge only reads the warehouse. It never changes anything in Connect. `AUTO_CREATE` still applies only to spools loaded in a printer, so a spool that is only in the warehouse waits for your choice. Archived spools are left out, and empty spools are only listed on the Warehouse page.
 
 ### Writing your own tags
 
@@ -125,6 +133,7 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 | ![Choosing how the bridge runs](docs/screenshots/setup-operation.png) | ![The dashboard in dark mode](docs/screenshots/dashboard-dark.png) |
 | ![The dashboard on a phone](docs/screenshots/dashboard-mobile.png) | ![The dashboard on a phone in dark mode](docs/screenshots/dashboard-mobile-dark.png) |
 | ![Warehouse spools waiting for a choice](docs/screenshots/warehouse.png) | ![Warehouse spools on a phone](docs/screenshots/warehouse-mobile.png) |
+| ![The Warehouse page](docs/screenshots/warehouse-page.png) | ![The Warehouse page on a phone](docs/screenshots/warehouse-page-mobile.png) |
 
 ## Development
 

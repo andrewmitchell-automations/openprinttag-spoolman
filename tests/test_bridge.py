@@ -1147,3 +1147,11 @@ def test_a_spool_created_from_the_warehouse_only_deducts_what_was_used_after(res
     make_bridge(tmp_path, warehouse_spool_printer(consumed=10)).poll()
     deductions = [json.loads(c.request.content) for c in patch.calls if "used_weight" in json.loads(c.request.content)]
     assert [d["used_weight"] for d in deductions] == [10.0]
+
+
+def test_empty_warehouse_spools_are_kept_only_when_asked():
+    item = {**WAREHOUSE_ITEM, "empty": True}
+    assert parse_warehouse_items([item]) == []
+    [entry] = parse_warehouse_items([item], include_empty=True)
+    assert entry["empty"] is True
+    assert parse_warehouse_items([{**WAREHOUSE_ITEM, "archived": True}], include_empty=True) == []

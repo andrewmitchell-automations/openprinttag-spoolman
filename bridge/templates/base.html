@@ -13,24 +13,43 @@
   {% if signed_in and settings.dry_run %}
   <p class="test-band">Dry run: the bridge shows what it would do, but writes nothing to Spoolman.</p>
   {% endif %}
-  <header class="top">
-    <div class="top-inner">
-      <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark" aria-hidden="true"></span>OpenPrintTag ↔ Spoolman</a>
-      {% if signed_in %}
-      <nav>
-        <a class="nav-link" href="{{ url_for('dashboard') }}" {{ 'aria-current=page' if request.endpoint == 'dashboard' }}>Dashboard</a>
-        <a class="nav-link" href="{{ url_for('logs') }}" {{ 'aria-current=page' if request.endpoint == 'logs' }}>Log</a>
-        <a class="nav-link" href="{{ url_for('setup', step='spoolman') }}" {{ 'aria-current=page' if request.endpoint == 'setup' }}>Settings</a>
-        <form method="post" action="{{ url_for('logout') }}"><button class="nav-link">Log out</button></form>
+  {% macro nav_link(endpoint, label, icon, href=None) %}
+  <a class="side-link" href="{{ href or url_for(endpoint) }}" {{ 'aria-current=page' if request.endpoint == endpoint }}>
+    <svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true">{{ icon|safe }}</svg>{{ label }}
+  </a>
+  {% endmacro %}
+  <div class="shell{{ ' with-side' if signed_in }}">
+    {% if signed_in %}
+    <aside class="side">
+      <div class="side-top">
+        <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark" aria-hidden="true"></span>OpenPrintTag ↔ Spoolman</a>
+        <button type="button" class="menu-toggle quiet" data-menu-toggle aria-controls="side-nav" aria-expanded="false" hidden>Menu</button>
+      </div>
+      <nav class="side-nav" id="side-nav" aria-label="Main">
+        {{ nav_link('dashboard', 'Dashboard', '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>') }}
+        {{ nav_link('warehouse', 'Warehouse', '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1.5"/>') }}
+        {{ nav_link('logs', 'Log', '<path d="M8 6.5h12M8 12h12M8 17.5h12"/><circle cx="4.5" cy="6.5" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="17.5" r="1"/>') }}
+        {{ nav_link('setup', 'Settings', '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>', url_for('setup', step='spoolman')) }}
+        <form method="post" action="{{ url_for('logout') }}" class="side-foot">
+          <button class="side-link">
+            <svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H14M10 12h10M16.5 8.5 20 12l-3.5 3.5"/></svg>Log out
+          </button>
+        </form>
       </nav>
-      {% endif %}
-    </div>
-  </header>
-  <main>
-    {% for category, message in get_flashed_messages(with_categories=true) %}
-    <p class="notice {{ category }}" role="status">{{ message }}</p>
-    {% endfor %}
-    {% block main %}{% endblock %}
-  </main>
+    </aside>
+    {% else %}
+    <header class="top">
+      <div class="top-inner">
+        <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark" aria-hidden="true"></span>OpenPrintTag ↔ Spoolman</a>
+      </div>
+    </header>
+    {% endif %}
+    <main>
+      {% for category, message in get_flashed_messages(with_categories=true) %}
+      <p class="notice {{ category }}" role="status">{{ message }}</p>
+      {% endfor %}
+      {% block main %}{% endblock %}
+    </main>
+  </div>
 </body>
 </html>
