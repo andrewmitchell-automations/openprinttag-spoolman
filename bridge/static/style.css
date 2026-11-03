@@ -103,27 +103,61 @@ a { color: var(--accent-text); }
 }
 .brand-mark { width: 1.2rem; height: 1.2rem; border-radius: 5px; background: var(--accent); }
 
-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; }
-nav form { margin: 0; }
-.nav-link {
-  display: inline-block;
-  padding: 0.35rem 0.8rem;
+/* The menu on the left */
+.shell { min-height: 100vh; }
+.shell.with-side { display: grid; grid-template-columns: 15rem minmax(0, 1fr); align-items: start; }
+.side {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 1rem 0.75rem;
+  border-right: 1px solid var(--line);
+  background: var(--card);
+}
+.side-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.25rem 0.5rem 1.25rem; }
+.side-top .brand { font-size: 0.95rem; }
+.side-nav { display: flex; flex: 1; flex-direction: column; gap: 0.2rem; }
+.side-foot { margin: auto 0 0; padding-top: 0.75rem; border-top: 1px solid var(--line); }
+.side-link {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
   border: 0;
-  border-radius: 999px;
+  border-radius: 10px;
   background: none;
   color: var(--mute);
   font: inherit;
   font-weight: 500;
+  text-align: left;
   text-decoration: none;
   cursor: pointer;
 }
-.nav-link:hover { background: var(--pill); color: var(--ink); }
-.nav-link[aria-current] { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.side-link:hover { background: var(--pill); color: var(--ink); }
+.side-link[aria-current] { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.side-icon { flex: none; width: 1.2rem; height: 1.2rem; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.menu-toggle { padding: 0.35rem 0.8rem; }
+.menu-toggle[hidden] { display: none; }
 
 main {
-  max-width: 62rem;
+  width: 100%;
+  max-width: 66rem;
   margin: 0 auto;
-  padding: 1.5rem 1rem 4rem;
+  padding: 1.5rem 1.5rem 4rem;
+}
+.with-side main { margin: 0; padding: 2rem 2.5rem 4rem; }
+
+@media (max-width: 48rem) {
+  .shell.with-side { display: block; }
+  .side { position: static; height: auto; padding: 0.5rem 0.75rem; border-right: 0; border-bottom: 1px solid var(--line); }
+  .side-top { padding: 0.25rem 0.25rem; }
+  .side-nav { padding: 0.5rem 0 0.25rem; }
+  .side-nav.collapsed { display: none; }
+  .side-foot { margin-top: 0.25rem; }
+  .with-side main { padding: 1.25rem 1rem 4rem; }
 }
 
 /* Text */

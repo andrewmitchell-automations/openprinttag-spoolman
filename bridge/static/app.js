@@ -1,3 +1,19 @@
+// On a phone the menu folds away behind a button. Without JavaScript it stays open.
+document.querySelectorAll("[data-menu-toggle]").forEach((toggle) => {
+  const nav = document.getElementById(toggle.getAttribute("aria-controls"));
+  const narrow = window.matchMedia("(max-width: 48rem)");
+  const fold = () => {
+    toggle.hidden = !narrow.matches;
+    nav.classList.toggle("collapsed", narrow.matches && toggle.getAttribute("aria-expanded") !== "true");
+  };
+  toggle.addEventListener("click", () => {
+    toggle.setAttribute("aria-expanded", String(toggle.getAttribute("aria-expanded") !== "true"));
+    fold();
+  });
+  narrow.addEventListener("change", fold);
+  fold();
+});
+
 // navigator.clipboard needs HTTPS, and this page usually runs on plain HTTP.
 document.querySelectorAll("[data-copy]").forEach((button) => {
   button.addEventListener("click", () => {
