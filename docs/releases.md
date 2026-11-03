@@ -4,8 +4,8 @@ Everything is driven by GitHub Actions. There are three workflows:
 
 | Workflow | When it runs | What it does |
 | --- | --- | --- |
-| `Tests` | every push to `main`/`dev` and every pull request | runs `pytest` |
-| `Docker image` | every push to `main`/`dev`, build-only on pull requests | publishes `ghcr.io/mathiasbk/openprinttag-spoolman:edge` (main), `:dev` (dev) and a `:sha-xxxxxxx` tag |
+| `Tests` | every push to `main`/`development` and every pull request | runs `pytest` |
+| `Docker image` | every push to `main`/`development`, build-only on pull requests | publishes `ghcr.io/mathiasbk/openprinttag-spoolman:edge` (main), `:dev` (development) and a `:sha-xxxxxxx` tag |
 | `Release` | only when you start it by hand | tests, bumps the version, writes the changelog, tags, publishes the release and the versioned image |
 
 ## Cutting a release
