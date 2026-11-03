@@ -1,0 +1,153 @@
+name: Release
+
+# Cut a release by hand from the Actions tab: pick the branch (normally main)
+# and how far to bump the version. Everything after that is automatic — tests,
+# version file, changelog, git tag, GitHub release and the GHCR image.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Which part of the version to raise"
+        type: choice
+        options: [patch, minor, major]
+        default: minor
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Run the tests
+        run: |
+          pip install -r requirements-dev.txt
+          python -m pytest
+
+      - name: Work out the new version
+        id: version
+        run: |
+          set -euo pipefail
+          previous=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          IFS=. read -r major minor patch <<< "${previous#v}"
+          major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          version="$major.$minor.$patch"
+          {
+            echo "previous=$previous"
+            echo "version=$version"
+            echo "tag=v$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version (previous: ${previous:-none})"
+
+      - name: Collect the changes since the last release
+        id: notes
+        run: |
+          set -euo pipefail
+          previous="${{ steps.version.outputs.previous }}"
+          if [ -n "$previous" ]; then
+            range="$previous..HEAD"
+          else
+            range="HEAD"
+          fi
+          git log --no-merges --reverse --pretty='- %s' "$range" > /tmp/notes.md
+          if [ ! -s /tmp/notes.md ]; then
+            echo "No commits since $previous, so there is nothing to release." >&2
+            exit 1
+          fi
+          cat /tmp/notes.md
+
+      - name: Update VERSION and CHANGELOG.md
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          echo "$version" > VERSION
+          entry="## $version - $(date -u +%Y-%m-%d)"
+          {
+            printf '%s\n\n' "$entry"
+            cat /tmp/notes.md
+          } > /tmp/entry.md
+          awk 'FNR==NR { entry = entry $0 "\n"; next }
+               { print }
+               /^<!-- new releases go below this line -->$/ && !done { printf "\n%s", entry; done = 1 }' \
+            /tmp/entry.md CHANGELOG.md > /tmp/changelog.md
+          mv /tmp/changelog.md CHANGELOG.md
+          head -n 20 CHANGELOG.md
+
+      - name: Commit and tag
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION CHANGELOG.md
+          git commit -m "Release ${{ steps.version.outputs.tag }}"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ steps.version.outputs.tag }}"
+          git push origin HEAD:"${{ github.ref_name }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out the image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }}
+            type=raw,value=latest,enable=${{ github.ref_name == github.event.repository.default_branch }}
+
+      - name: Build and push the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          {
+            cat /tmp/notes.md
+            printf '\n**Docker image:** `ghcr.io/%s:%s`\n' \
+              "${{ github.repository }}" "${{ steps.version.outputs.version }}"
+          } > /tmp/release-body.md
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes-file /tmp/release-body.md
