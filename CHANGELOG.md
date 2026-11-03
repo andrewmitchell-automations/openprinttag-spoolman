@@ -8,3 +8,7 @@ the patch number for fixes.
 Releases are cut from the Actions tab — see [docs/releases.md](docs/releases.md).
 
 <!-- new releases go below this line -->
+
+## 0.1.0 - 2026-11-03
+
+- First tagged release.
