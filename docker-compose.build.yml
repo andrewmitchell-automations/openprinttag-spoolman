@@ -1,0 +1,6 @@
+# Builds the image from this checkout instead of pulling a release:
+#   ./setup.sh --build
+services:
+  bridge:
+    build: .
+    image: openprinttag-spoolman:local
