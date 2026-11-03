@@ -142,12 +142,15 @@ def fill_from_warehouse(loaded: LoadedSpool, item: dict) -> LoadedSpool:
     return replace(loaded, from_warehouse=True, **missing)
 
 
-def parse_warehouse_items(items: list[dict]) -> list[dict]:
-    """The spools in the Connect warehouse that are still in use, loaded in a printer or not."""
+def parse_warehouse_items(items: list[dict], include_empty: bool = False) -> list[dict]:
+    """The spools in the Connect warehouse that are still in use, loaded in a printer or not.
+
+    With include_empty, spools marked empty are kept too, with "empty" set. Archived spools are always left out.
+    """
     spools = []
     for item in items:
         uuid = (item.get("materialPackageInstance") or {}).get("uuid")
-        if not uuid or item.get("archived") or item.get("empty"):
+        if not uuid or item.get("archived") or (item.get("empty") and not include_empty):
             continue
         blank = LoadedSpool(
             tool_id="",
@@ -165,7 +168,7 @@ def parse_warehouse_items(items: list[dict]) -> list[dict]:
             color_hex=None,
             density=None,
         )
-        spools.append({"spool": fill_from_warehouse(blank, item), "location": item.get("location") or ""})
+        spools.append({"spool": fill_from_warehouse(blank, item), "location": item.get("location") or "", "empty": bool(item.get("empty"))})
     return spools
 
 

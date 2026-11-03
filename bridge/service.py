@@ -45,6 +45,7 @@ class Service:
         self.login_email: str | None = None
         self.last_auth_error: str | None = None
         self.warehouse: list[dict] = []
+        self.warehouse_empty: list[dict] = []
         self.warehouse_time: float | None = None
         self.warehouse_error: str | None = None
         self.warehouse_due = 0.0
@@ -145,12 +146,13 @@ class Service:
         spools = []
         try:
             for organization_id in sorted({p.organization_id for p in self.settings.enabled_printers}):
-                spools.extend(parse_warehouse_items(self.connect.warehouse_items(organization_id)))
+                spools.extend(parse_warehouse_items(self.connect.warehouse_items(organization_id), include_empty=True))
         except Exception as e:
             self.warehouse_error = str(e)
             log.warning("Could not read the Connect warehouse: %s", e)
             return
-        self.warehouse = spools
+        self.warehouse = [entry for entry in spools if not entry["empty"]]
+        self.warehouse_empty = [entry for entry in spools if entry["empty"]]
         self.warehouse_time = now
         self.warehouse_error = None
 
@@ -170,6 +172,70 @@ class Service:
         return {
             "unlinked": [{**entry, "printer": printers.get(entry["spool"].uuid)} for entry in unlinked],
             "linked_count": len(self.warehouse) - len(unlinked),
+            "time": self.warehouse_time,
+            "error": self.warehouse_error,
+        }
+
+    def warehouse_overview(self, spools: list[dict] | None) -> dict:
+        """Every spool Connect knows about: the warehouse, plus loaded spools that are not in it.
+
+        spools is the Spoolman list, or None when Spoolman could not be read; links are then unknown.
+        """
+        by_uuid = {}
+        for spool in spools or []:
+            uuid = extra_value(spool, SPOOL_UUID_FIELD)
+            if uuid:
+                by_uuid[uuid] = spool
+        loaded = {}
+        for entry in self.status.values():
+            for tool in entry.get("tools", []):
+                loaded[tool["spool"].uuid] = (tool["spool"], entry.get("name") or entry["config"].name or entry["config"].uuid)
+
+        rows = []
+
+        def add(spool: LoadedSpool, location: str, empty: bool, in_warehouse: bool) -> None:
+            printer = loaded.get(spool.uuid, (None, None))[1]
+            linked = by_uuid.get(spool.uuid)
+            rows.append({
+                "spool": spool,
+                "location": location,
+                "printer": printer,
+                "empty": empty,
+                "in_warehouse": in_warehouse,
+                "linked": linked and {
+                    "id": linked["id"],
+                    "url": self.spoolman.spool_url(linked["id"]),
+                    "remaining": linked.get("remaining_weight"),
+                },
+            })
+
+        in_warehouse = set()
+        for entry in self.warehouse + self.warehouse_empty:
+            spool = entry["spool"]
+            in_warehouse.add(spool.uuid)
+            # A loaded spool's tool reports live consumption, which is newer than the warehouse read.
+            add(loaded.get(spool.uuid, (spool,))[0], entry["location"], entry["empty"], True)
+        for uuid, (spool, _printer) in loaded.items():
+            if uuid not in in_warehouse:
+                add(spool, "", False, False)
+
+        rows.sort(key=lambda r: (r["empty"], r["printer"] is None, (r["spool"].material_type or "~").upper(), r["spool"].display_name.lower()))
+        active = [r for r in rows if not r["empty"]]
+        materials = {}
+        for row in active:
+            key = row["spool"].material_type or "Unknown"
+            count, grams = materials.get(key, (0, 0.0))
+            materials[key] = (count + 1, grams + (row["spool"].remaining_weight or 0))
+        return {
+            "rows": rows,
+            "links_known": spools is not None,
+            "active_count": len(active),
+            "empty_count": len(rows) - len(active),
+            "loaded_count": sum(1 for r in active if r["printer"]),
+            "unlinked_count": sum(1 for r in active if not r["linked"]) if spools is not None else None,
+            "remaining_total": sum(r["spool"].remaining_weight or 0 for r in active),
+            "unknown_weight_count": sum(1 for r in active if r["spool"].remaining_weight is None),
+            "materials": sorted(materials.items(), key=lambda item: -item[1][1]),
             "time": self.warehouse_time,
             "error": self.warehouse_error,
         }

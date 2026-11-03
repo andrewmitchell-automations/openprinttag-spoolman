@@ -150,6 +150,10 @@ def create_app(service: Service) -> Flask:
     def grams(value):
         return "unknown" if value is None else f"{round(value):d} g"
 
+    @app.template_filter("kilograms")
+    def kilograms(value):
+        return f"{round(value):d} g" if value < 1000 else f"{value / 1000:.1f} kg"
+
     @app.template_filter("until")
     def until(timestamp):
         if not timestamp:
@@ -281,6 +285,30 @@ def create_app(service: Service) -> Flask:
                     entry["candidates"] = service.link_candidates(entry["spool"], spools)
         needs_choice = any("candidates" in tool for printer in printers for tool in printer["tools"]) or bool(warehouse and warehouse["unlinked"])
         return render_template("dashboard.html", printers=printers, problems=problems, token=service.token_status(), needs_choice=needs_choice, warehouse=warehouse)
+
+    @app.get("/warehouse")
+    def warehouse():
+        step = next_step(service)
+        if step:
+            return redirect(url_for("setup", step=step))
+        problems = []
+        with service.lock:
+            try:
+                spools = service.list_spools()
+            except Exception as e:
+                problems.append(f"Could not read spools from Spoolman, so links are not shown: {e}")
+                spools = None
+            overview = service.warehouse_overview(spools)
+            for row in overview["rows"]:
+                if spools is not None and not row["linked"] and not row["printer"] and not row["empty"]:
+                    row["candidates"] = service.link_candidates(row["spool"], spools)
+        return render_template("warehouse.html", overview=overview, problems=problems)
+
+    @app.post("/warehouse/refresh")
+    def refresh_warehouse():
+        service.refresh_warehouse_soon()
+        flash("Reading the Connect warehouse now. Reload this page in a moment.", "ok")
+        return redirect(url_for("warehouse"))
 
     @app.get("/logs")
     def logs():
