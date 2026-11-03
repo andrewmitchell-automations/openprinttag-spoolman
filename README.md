@@ -27,11 +27,17 @@ The bridge starts in dry-run mode. It reads everything and shows what it would d
 
 ## Quick start
 
+The bridge runs from the image published with each [release](https://github.com/mathiasbk/openprinttag-spoolman/releases):
+
 ```
-git clone https://github.com/mathiasbk/openprinttag-spoolman.git
-cd openprinttag-spoolman
-docker compose up -d --build
+mkdir openprinttag-spoolman && cd openprinttag-spoolman
+curl -fsSLO https://raw.githubusercontent.com/mathiasbk/openprinttag-spoolman/main/docker-compose.yml
+docker compose up -d
 ```
+
+To update to the newest release later, run `docker compose pull && docker compose up -d` in the same folder. Your settings stay in `data/`. To stay on one version, put `BRIDGE_TAG=0.1.0` (or another version) in `.env`.
+
+To build from source instead, clone the repository and run `./setup.sh --build`.
 
 Open `http://your-server:7913` and follow the steps:
 

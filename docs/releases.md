@@ -26,22 +26,15 @@ commit, fix the problem and run the workflow again.
 
 ## Running a published image
 
-The first release makes the image public-readable by default only if the
-package is set to public: open the package page on GitHub once and switch its
-visibility to public.
+The bundled `docker-compose.yml` runs `ghcr.io/mathiasbk/openprinttag-spoolman:latest`,
+so a server only needs that file, `.env` and `data/`. `./setup.sh` (or
+`docker compose pull && docker compose up -d`) updates to the newest release.
+Set `BRIDGE_TAG` in `.env` to pin a version (`0.1.0`), or to follow `main`
+(`edge`) or `development` (`dev`).
 
-```yaml
-services:
-  bridge:
-    image: ghcr.io/mathiasbk/openprinttag-spoolman:latest
-    restart: unless-stopped
-    environment:
-      WEB_PORT: 7913
-    ports:
-      - "7913:7913"
-    volumes:
-      - ./data:/data:Z
-```
+The package must be public for this to work without logging in to GHCR: after
+the first release, open the package page on GitHub once and set its visibility
+to public.
 
-`setup.sh` and the bundled `docker-compose.yml` still build from source, which
-stays the supported way to run a checkout of the repository.
+`./setup.sh --build` builds from the checkout instead, using
+`docker-compose.build.yml`.

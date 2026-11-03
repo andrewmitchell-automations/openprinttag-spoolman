@@ -1,6 +1,8 @@
 services:
   bridge:
-    build: .
+    # The newest release. Set BRIDGE_TAG in .env to pin a version (e.g. 0.1.0)
+    # or to follow main (edge) or development (dev).
+    image: ghcr.io/mathiasbk/openprinttag-spoolman:${BRIDGE_TAG:-latest}
     restart: unless-stopped
     env_file:
       - path: .env
