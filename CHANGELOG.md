@@ -9,6 +9,14 @@ Releases are cut from the Actions tab — see [docs/releases.md](docs/releases.m
 
 <!-- new releases go below this line -->
 
+## 0.2.0 - 2026-11-03
+
+- Run the published image instead of building on the server
+- Add a Warehouse page with every spool Connect knows about
+- Hide the warehouse filters when JavaScript is off
+- Show the warehouse as a table like Spoolman's spool list
+- Move the menu to a sidebar on the left
+
 ## 0.1.0 - 2026-11-03
 
 - First tagged release.
