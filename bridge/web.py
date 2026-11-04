@@ -343,6 +343,9 @@ def create_app(service: Service) -> Flask:
 
     @app.post("/go-live")
     def go_live():
+        step = next_step(service)
+        if step:
+            return redirect(url_for("setup", step=step))
         update_config(service.settings.data_dir, {"dry_run": False})
         service.reload()
         log.info("Dry run turned off from the dashboard")

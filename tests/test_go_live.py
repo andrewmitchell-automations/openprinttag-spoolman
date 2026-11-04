@@ -70,3 +70,22 @@ def test_going_live_turns_dry_run_off(respx_mock, tmp_path):
     assert service.settings.dry_run is False
     assert client.get("/go-live").headers["Location"].endswith("/")
     assert "Go live" not in client.get("/").text
+
+
+@respx.mock(assert_all_called=False)
+def test_go_live_finds_a_spool_linked_after_the_last_poll(respx_mock, tmp_path):
+    service = dry_run_with_linked_spool(respx_mock, tmp_path, consumed=106, marker=100)
+    # The link moved to spool 60 in Spoolman after the poll.
+    moved = {"id": 60, "location": "Core One", "extra": {"opt_instance_uuid": json.dumps(UUID), "opt_consumed_weight": json.dumps(103)}}
+    respx_mock.get(url__startswith=f"{SPOOLMAN}/api/v1/spool?").respond(json=[moved])
+    preview = service.go_live_preview()
+    assert [(row["spool_id"], row["deduct"]) for row in preview["rows"]] == [(60, 3.0)]
+    assert preview["unlinked"] == []
+
+
+def test_go_live_needs_a_finished_setup(tmp_path):
+    from tests.test_web import make_service
+    service = make_service(tmp_path)
+    client = signed_in(service)
+    assert client.post("/go-live").headers["Location"].endswith("/setup/spoolman")
+    assert "dry_run" not in read_config(tmp_path)

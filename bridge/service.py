@@ -18,6 +18,7 @@ from .sync import (
     State,
     build_link_changes,
     go_live_step,
+    index_spools,
     parse_warehouse_items,
     rank_spools_for_link,
     stored_consumed,
@@ -253,7 +254,8 @@ class Service:
     def go_live_preview(self) -> dict:
         """What turning dry run off would deduct on the first live poll, from the last poll's numbers."""
         with self.lock:
-            spools = {spool["id"]: spool for spool in self.spoolman.list_spools()}
+            # Looked up by instance UUID, like the live poll, so a link changed since the last poll is not missed.
+            spools = index_spools(self.spoolman.list_spools())
             # A live bridge reads the state file without the dry run's in-memory values.
             state = State(self.settings.state_path, dry_run=False)
             rows = []
@@ -262,7 +264,7 @@ class Service:
                 entry = self.status.get(config.uuid) or {}
                 for tool in entry.get("tools", []):
                     loaded = tool["spool"]
-                    spool = spools.get(tool["spool_id"]) if tool["spool_id"] else None
+                    spool = spools.get(loaded.uuid)
                     if spool is None:
                         unlinked.append({"spool": loaded, "printer": entry.get("name") or config.name})
                         continue
