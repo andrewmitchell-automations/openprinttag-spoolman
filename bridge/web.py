@@ -40,6 +40,7 @@ class LoginNonces:
         self.lifetime = lifetime
         self.lock = threading.Lock()
         self.expiries: dict[str, float] = {}
+        self.delivered: dict[str, tuple[float, str]] = {}
 
     def issue(self) -> str:
         nonce = secrets.token_urlsafe(24)
@@ -53,6 +54,20 @@ class LoginNonces:
         with self.lock:
             expiry = self.expiries.pop(nonce, 0) if isinstance(nonce, str) else 0
         return expiry > time.time()
+
+    def deliver(self, nonce: str, message: str) -> None:
+        """Remember that a code brought a working login, so the setup page can move on by itself."""
+        with self.lock:
+            now = time.time()
+            self.delivered = {n: d for n, d in self.delivered.items() if d[0] > now}
+            self.delivered[nonce] = (now + self.lifetime, message)
+
+    def status(self, nonce) -> str:
+        """delivered, waiting or expired."""
+        with self.lock:
+            if isinstance(nonce, str) and nonce in self.delivered:
+                return "delivered"
+            return "waiting" if self.expiries.get(nonce, 0) > time.time() else "expired"
 
 
 def bookmarklet(receive_url: str, nonce: str) -> str:
@@ -209,8 +224,18 @@ def create_app(service: Service) -> Flask:
             log.warning("A login from the bookmark was not accepted: %s", e)
             return jsonify(ok=False, message=f"Connect rejected the login: {e}"), 400
         if not parsed[1]:
-            return jsonify(ok=True, message=f"Logged in as {me.get('email')}, but there is no refresh token, so the bridge stops when the login expires.")
-        return jsonify(ok=True, message=f"Logged in as {me.get('email')}.")
+            message = f"Logged in as {me.get('email')}, but there is no refresh token, so the bridge stops when the login expires."
+        else:
+            message = f"Logged in as {me.get('email')}."
+        nonces.deliver(data["nonce"], message)
+        return jsonify(ok=True, message=message)
+
+    @app.get("/setup/connect/status")
+    def login_status():
+        """The setup page asks this while it waits for the bookmark, so it can continue by itself."""
+        nonce = request.args.get("nonce")
+        state = nonces.status(nonce)
+        return jsonify(state=state, message=nonces.delivered[nonce][1] if state == "delivered" else None)
 
     @app.get("/healthz")
     def healthz():
@@ -409,7 +434,8 @@ def create_app(service: Service) -> Flask:
         if step == "connect":
             context["token"] = service.token_status()
             context["console_line"] = CONSOLE_LINE
-            context["bookmarklet"] = bookmarklet(url_for("receive_login", _external=True), nonces.issue())
+            context["nonce"] = nonces.issue()
+            context["bookmarklet"] = bookmarklet(url_for("receive_login", _external=True), context["nonce"])
         return render_template("setup.html", step=step, steps=STEPS, form=request.form, **context)
 
     def _post_spoolman():

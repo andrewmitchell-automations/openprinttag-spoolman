@@ -45,12 +45,21 @@
 <ol class="instructions">
   <li>Drag this button to your bookmarks bar:
     <p><a class="button bookmarklet" href="{{ bookmarklet }}" draggable="true">Send Prusa login to bridge</a></p>
+    <details class="phone-bookmark">
+      <summary>On a phone or tablet?</summary>
+      <p class="hint">Phones cannot drag bookmarks. Copy the code below, bookmark any page, then edit that bookmark and paste the code as its address. On the Connect page, type the bookmark's name in the address bar and choose it.</p>
+      <div class="copy">
+        <code id="bookmarklet-code">{{ bookmarklet }}</code>
+        <button type="button" class="quiet" data-copy="bookmarklet-code">Copy</button>
+      </div>
+    </details>
   </li>
   <li>Open a <strong>private window</strong> and log in to <a href="https://connect.prusa3d.com" target="_blank" rel="noopener">connect.prusa3d.com</a>. A separate window gives the bridge its own session, so you are not logged out elsewhere.</li>
   <li>Click the bookmark on the Connect page. It sends the login to this bridge.</li>
-  <li>Close the private window without logging out, then reload this page.</li>
+  <li>Close the private window without logging out. This page notices the login and continues by itself.</li>
 </ol>
-<p class="hint">The bookmark works once, within 15 minutes. To log in again, reload this page and drag the new button.</p>
+<p class="notice" role="status" data-login-wait="{{ url_for('login_status', nonce=nonce) }}" data-login-next="{{ url_for('setup', step='printers') }}" hidden>Waiting for the bookmark…</p>
+<p class="hint">The bookmark works once, within 15 minutes. To log in again, reload this page and use the new button.</p>
 <details class="manual-login">
   <summary>Paste the login instead</summary>
   <p class="hint">Use this if the bookmark does not work. On the Connect page, press F12, open the console and run this line. If the console warns about pasting, first type what it asks for.</p>

@@ -135,3 +135,29 @@ document.querySelectorAll("[data-inventory]").forEach((body) => {
   });
   update();
 });
+
+// The Connect setup step waits for the bookmark and moves on once the login has arrived.
+document.querySelectorAll("[data-login-wait]").forEach((notice) => {
+  notice.hidden = false;
+  const check = async () => {
+    try {
+      const response = await fetch(notice.dataset.loginWait, { headers: { Accept: "application/json" } });
+      const result = await response.json();
+      if (result.state === "delivered") {
+        notice.classList.add("ok");
+        notice.textContent = `${result.message} Continuing…`;
+        setTimeout(() => { window.location.href = notice.dataset.loginNext; }, 1500);
+        return;
+      }
+      if (result.state === "expired") {
+        notice.classList.add("error");
+        notice.textContent = "This bookmark has expired. Reload the page to get a new one.";
+        return;
+      }
+    } catch {
+      // The bridge may be restarting; keep waiting.
+    }
+    setTimeout(check, 2000);
+  };
+  setTimeout(check, 2000);
+});
