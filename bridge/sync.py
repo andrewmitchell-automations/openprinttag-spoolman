@@ -220,8 +220,10 @@ def stored_consumed(spool: dict) -> float | None:
 
 
 def grams_text(value: float) -> str:
-    """6 g, or 0.4 g for less than a gram."""
-    return f"{round(value)} g" if value >= 1 else f"{round(value, 1):g} g"
+    """12 g, 1.4 g, or "less than 0.1 g", so a small deduction never reads as 0 g."""
+    if value < 0.05:
+        return "less than 0.1 g"
+    return f"{round(value)} g" if value >= 10 else f"{round(value, 1):g} g"
 
 
 def encode_consumed(consumed: float) -> str:

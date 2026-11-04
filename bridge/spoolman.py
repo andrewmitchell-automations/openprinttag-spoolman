@@ -92,8 +92,8 @@ class SpoolmanClient:
         rendered = json.dumps(body, ensure_ascii=False)
         line = f"{method} {path} {rendered}"
         action = {"dry_run": self.dry_run, "summary": summary or describe(method, path), "text": line}
-        self.captured.append(action)
         if self.dry_run:
+            self.captured.append(action)
             # A dry run repeats the same intent every poll; once in the log is enough.
             if line not in self._announced:
                 self._announced.add(line)
@@ -102,6 +102,8 @@ class SpoolmanClient:
             return None
         log.info("Calling %s", line)
         result = self._request(method, path, body)
+        # Only writes Spoolman accepted are listed, so a retried write does not show up twice.
+        self.captured.append(action)
         self.actions.append({"time": time.time(), **action})
         return result
 
