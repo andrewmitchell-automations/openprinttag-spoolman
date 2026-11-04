@@ -89,6 +89,8 @@ A tag written from the material form in the Prusa app can make a Core One say "T
 
 The consumption a spool already accounts for is stored on the spool itself, in the extra field `opt_consumed_weight` ("OpenPrintTag consumed"). The used weight and this field are changed in the same request, after the bridge has read the spool again. A second bridge, a reinstall or a lost `data` folder therefore cannot deduct the same grams twice. Do not edit the field by hand unless you mean to change what gets deducted next.
 
+The dashboard shows what Spoolman has left next to Connect's number for each linked spool, and points it out when they differ by 10 g or more, for example after use on another printer. The bridge never corrects that difference itself.
+
 `data/state.json` keeps a local copy and is used for spools linked before the field existed. It is updated only after Spoolman has answered. A dry run stores only its first baseline, so what is used during the dry run is deducted when you turn writing on.
 
 ## Configuration

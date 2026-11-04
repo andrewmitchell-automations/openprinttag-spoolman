@@ -27,6 +27,8 @@ STEPS = ("spoolman", "connect", "printers", "mode")
 MIN_PASSWORD_LENGTH = 8
 CA_FILENAME = "spoolman-ca.crt"
 NONCE_LIFETIME_SECONDS = 15 * 60
+# Connect counts whole grams, and the two can be a few grams apart while a print runs.
+WEIGHT_MISMATCH_GRAMS = 10
 CONSOLE_LINE = (
     "copy(JSON.stringify({access: localStorage.getItem('auth.access_token'), "
     "refresh: localStorage.getItem('auth.refresh_token')}))"
@@ -274,6 +276,12 @@ def create_app(service: Service) -> Flask:
                     view = dict(tool)
                     if tool["spool_id"]:
                         view["url"] = service.spoolman.spool_url(tool["spool_id"])
+                        linked = next((s for s in spools or [] if s["id"] == tool["spool_id"]), None)
+                        view["spoolman_remaining"] = linked.get("remaining_weight") if linked else None
+                        connect_remaining = tool["spool"].remaining_weight
+                        if view["spoolman_remaining"] is not None and connect_remaining is not None:
+                            difference = view["spoolman_remaining"] - connect_remaining
+                            view["weight_difference"] = difference if abs(difference) >= WEIGHT_MISMATCH_GRAMS else None
                     else:
                         view["candidates"] = service.link_candidates(tool["spool"], spools or [])
                     tools.append(view)

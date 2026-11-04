@@ -54,8 +54,13 @@
 
       {% if tool.url %}
       <div class="tool-foot">
-        <a class="linked" href="{{ tool.url }}">✓ Linked to spool #{{ tool.spool_id }}</a>
+        <span class="linked-to">
+          <a class="linked" href="{{ tool.url }}">✓ Linked to spool #{{ tool.spool_id }}</a>
+          {% if tool.spoolman_remaining is not none %}<span class="spoolman-weight">Spoolman: <strong>{{ tool.spoolman_remaining|grams }}</strong> left</span>{% endif %}
+          {% if tool.weight_difference %}<span class="pill pill-attention">{{ tool.weight_difference|abs|grams }} {{ 'more' if tool.weight_difference > 0 else 'less' }} than Connect</span>{% endif %}
+        </span>
         <a class="unlink" href="{{ url_for('unlink_review', spool_id=tool.spool_id) }}">Unlink</a>
+        {% if tool.weight_difference %}<p class="hint weight-note">Spoolman and Connect disagree on what is left. Usage from another printer, a manual change in Spoolman or different spool weights can cause this. The bridge only deducts new consumption, so the difference stays until you correct it in <a href="{{ tool.url }}">Spoolman</a>.</p>{% endif %}
       </div>
       {% else %}
       <div class="unlinked">
