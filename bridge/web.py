@@ -40,7 +40,7 @@ class LoginNonces:
         self.lifetime = lifetime
         self.lock = threading.Lock()
         self.expiries: dict[str, float] = {}
-        self.delivered: dict[str, tuple[float, str]] = {}
+        self.results: dict[str, tuple[float, str, str]] = {}
 
     def issue(self) -> str:
         nonce = secrets.token_urlsafe(24)
@@ -55,19 +55,20 @@ class LoginNonces:
             expiry = self.expiries.pop(nonce, 0) if isinstance(nonce, str) else 0
         return expiry > time.time()
 
-    def deliver(self, nonce: str, message: str) -> None:
-        """Remember that a code brought a working login, so the setup page can move on by itself."""
+    def finish(self, nonce: str, state: str, message: str) -> None:
+        """Remember what a used code brought, so the setup page can tell: delivered, warning or failed."""
         with self.lock:
             now = time.time()
-            self.delivered = {n: d for n, d in self.delivered.items() if d[0] > now}
-            self.delivered[nonce] = (now + self.lifetime, message)
+            self.results = {n: r for n, r in self.results.items() if r[0] > now}
+            self.results[nonce] = (now + self.lifetime, state, message)
 
-    def status(self, nonce) -> str:
-        """delivered, waiting or expired."""
+    def status(self, nonce) -> tuple[str, str | None]:
+        """(state, message): delivered, warning or failed once used, otherwise waiting or expired."""
         with self.lock:
-            if isinstance(nonce, str) and nonce in self.delivered:
-                return "delivered"
-            return "waiting" if self.expiries.get(nonce, 0) > time.time() else "expired"
+            if isinstance(nonce, str) and nonce in self.results:
+                _, state, message = self.results[nonce]
+                return state, message
+            return ("waiting" if self.expiries.get(nonce, 0) > time.time() else "expired"), None
 
 
 def bookmarklet(receive_url: str, nonce: str) -> str:
@@ -217,25 +218,29 @@ def create_app(service: Service) -> Flask:
             return jsonify(ok=False, message="This login link has expired or was already used. Reload the setup page and drag the new link to your bookmarks."), 403
         parsed = parse_login_json(json.dumps({"access": data.get("access"), "refresh": data.get("refresh")}))
         if not parsed:
-            return jsonify(ok=False, message="No Prusa Connect login was found. Log in on connect.prusa3d.com first."), 400
+            message = "No Prusa Connect login was found. Log in on connect.prusa3d.com first."
+            nonces.finish(data["nonce"], "failed", message)
+            return jsonify(ok=False, message=message), 400
         try:
             me = service.log_in_to_connect(*parsed)
         except Exception as e:
             log.warning("A login from the bookmark was not accepted: %s", e)
-            return jsonify(ok=False, message=f"Connect rejected the login: {e}"), 400
+            message = f"Connect rejected the login: {str(e).rstrip('.')}."
+            nonces.finish(data["nonce"], "failed", message)
+            return jsonify(ok=False, message=message), 400
         if not parsed[1]:
             message = f"Logged in as {me.get('email')}, but there is no refresh token, so the bridge stops when the login expires."
+            nonces.finish(data["nonce"], "warning", message)
         else:
             message = f"Logged in as {me.get('email')}."
-        nonces.deliver(data["nonce"], message)
+            nonces.finish(data["nonce"], "delivered", message)
         return jsonify(ok=True, message=message)
 
     @app.get("/setup/connect/status")
     def login_status():
         """The setup page asks this while it waits for the bookmark, so it can continue by itself."""
-        nonce = request.args.get("nonce")
-        state = nonces.status(nonce)
-        return jsonify(state=state, message=nonces.delivered[nonce][1] if state == "delivered" else None)
+        state, message = nonces.status(request.args.get("nonce"))
+        return jsonify(state=state, message=message)
 
     @app.get("/healthz")
     def healthz():

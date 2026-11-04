@@ -58,7 +58,7 @@
   <li>Click the bookmark on the Connect page. It sends the login to this bridge.</li>
   <li>Close the private window without logging out. This page notices the login and continues by itself.</li>
 </ol>
-<p class="notice" role="status" data-login-wait="{{ url_for('login_status', nonce=nonce) }}" data-login-next="{{ url_for('setup', step='printers') }}" hidden>Waiting for the bookmark…</p>
+<p class="notice" role="status" data-login-wait="{{ url_for('login_status', nonce=nonce) }}" data-login-next="{{ url_for('setup', step='printers') }}" data-login-page="{{ url_for('login') }}"{% if token.logged_in %} data-logged-in{% endif %} hidden>Waiting for the bookmark…</p>
 <p class="hint">The bookmark works once, within 15 minutes. To log in again, reload this page and use the new button.</p>
 <details class="manual-login">
   <summary>Paste the login instead</summary>
