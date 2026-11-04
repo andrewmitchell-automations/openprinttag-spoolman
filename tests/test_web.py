@@ -433,7 +433,8 @@ def test_recent_actions_show_their_text(respx_mock, tmp_path):
     assert service.poll_once() is True
     page = signed_in(service).get("/").text
     assert "PATCH /spool/52" in page
-    assert "Called" in page
+    assert "Moved spool #52 to Core One" in page
+    assert "Show details" in page
 
 
 def custom_graphql(request):
