@@ -282,6 +282,8 @@ def create_app(service: Service) -> Flask:
                         if view["spoolman_remaining"] is not None and connect_remaining is not None:
                             difference = view["spoolman_remaining"] - connect_remaining
                             view["weight_difference"] = difference if abs(difference) >= WEIGHT_MISMATCH_GRAMS else None
+                            # In a dry run Spoolman lags behind Connect by what has not been deducted yet.
+                            view["not_deducted_yet"] = service.settings.dry_run and difference > 0
                     else:
                         view["candidates"] = service.link_candidates(tool["spool"], spools or [])
                     tools.append(view)
