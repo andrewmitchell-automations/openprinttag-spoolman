@@ -375,6 +375,9 @@ a.button.bookmarklet { cursor: grab; }
 .instructions { max-width: 42rem; padding-left: 1.25rem; }
 .instructions li { margin-bottom: 0.75rem; }
 .manual-login { max-width: 42rem; margin-top: 1.5rem; }
+.phone-bookmark { margin-top: 0.75rem; }
+.phone-bookmark .hint, .phone-bookmark .copy { margin-top: 0.5rem; }
+.phone-bookmark code { -webkit-user-select: all; user-select: all; display: block; max-height: 4.5rem; overflow: auto; overflow-wrap: anywhere; font-size: 0.8rem; }
 .manual-login .copy, .manual-login form { margin-top: 0.75rem; }
 .copy { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; padding: 0.6rem 0.75rem; border-radius: 10px; background: var(--bg); }
 .copy code { flex: 1 1 16rem; min-width: 0; }

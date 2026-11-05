@@ -44,7 +44,7 @@ Open `http://your-server:7913` and follow the steps:
 
 1. **Password:** choose an admin password. Do this right away, because whoever opens the page first sets it.
 2. **Spoolman:** enter the address and test the connection. If you use HTTPS with your own CA, upload the root certificate here.
-3. **Prusa Connect:** drag the button to your bookmarks bar, log in on connect.prusa3d.com in a private window, and click the bookmark. Prusa has no login for tools like this, so the bookmark copies it from your browser once. The bridge renews it after that. You can paste the login by hand instead.
+3. **Prusa Connect:** drag the button to your bookmarks bar, log in on connect.prusa3d.com in a private window, and click the bookmark. The setup page notices the login and continues by itself. On a phone, copy the bookmark code from the page and paste it as the address of a new bookmark. Prusa has no login for tools like this, so the bookmark copies it from your browser once. The bridge renews it after that. You can paste the login by hand instead.
 4. **Printers:** choose your printers and the location each one gets in Spoolman.
 5. **Operation:** choose dry run, whether new spools are created automatically, and how often to poll.
 
