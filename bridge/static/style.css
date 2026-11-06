@@ -254,6 +254,10 @@ h3 { margin: 0; font-size: 1.13rem; font-weight: 600; }
 }
 .linked { color: var(--accent-text); font-weight: 600; text-decoration: none; }
 .linked:hover { text-decoration: underline; }
+.linked-to { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; }
+.spoolman-weight { color: var(--mute); font-size: 0.93rem; font-variant-numeric: tabular-nums; }
+.spoolman-weight strong { color: var(--ink); }
+.weight-note { flex-basis: 100%; max-width: none; }
 .unlink { color: var(--mute); font-size: 0.93rem; text-decoration: none; }
 .unlink:hover { text-decoration: underline; }
 
