@@ -1,3 +1,5 @@
+> **Homelab fork.** Adds a read-only `GET /api/status` (no login) that lists the loaded spool per printer for Home Assistant. Upstream: [mathiasbk/openprinttag-spoolman](https://github.com/mathiasbk/openprinttag-spoolman).
+
 # OpenPrintTag Spoolman for Prusa Connect
 
 [![Tests](https://github.com/mathiasbk/openprinttag-spoolman/actions/workflows/tests.yml/badge.svg)](https://github.com/mathiasbk/openprinttag-spoolman/actions/workflows/tests.yml)

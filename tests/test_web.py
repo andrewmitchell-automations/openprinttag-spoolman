@@ -735,3 +735,57 @@ def test_warehouse_read_now_asks_for_a_new_read(respx_mock, tmp_path):
     response = client.post("/warehouse/refresh")
     assert response.status_code == 302 and response.headers["Location"].endswith("/warehouse")
     assert service.warehouse_due == 0.0
+
+
+# Status endpoint (homelab fork)
+
+def loaded_spool(uuid=UUID):
+    from bridge.sync import LoadedSpool
+    return LoadedSpool(
+        tool_id="1", uuid=uuid, is_from_nfc=True, actual_weight=1000.0, consumed_weight=120.0,
+        nominal_weight=1000.0, empty_weight=200.0, filament_diameter=1.75, material_uuid=None,
+        material_name="PLA Galaxy Black", material_type="PLA", brand="Prusament", color_hex="101010", density=1.24,
+    )
+
+
+def test_status_needs_no_login_and_lists_loaded_tools(tmp_path):
+    service = configured(tmp_path)
+    service.status["printer-1"] = {"actions": [], "name": "Miles", "time": 1794440000.0, "error": None,
+                                   "tools": [{"spool": loaded_spool(), "spool_id": 42}]}
+    response = make_client(service).get("/api/status")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["auth_error"] is None
+    assert body["printers"] == [{
+        "uuid": "printer-1", "name": "Miles", "time": 1794440000.0, "error": None,
+        "tools": [{"tool_id": "1", "instance_uuid": UUID, "spool_id": 42, "is_from_nfc": True,
+                   "consumed_weight": 120.0, "actual_weight": 1000.0}],
+    }]
+
+
+def test_status_reports_an_unlinked_spool_and_an_empty_printer(tmp_path):
+    service = configured(tmp_path)
+    service.status["printer-1"] = {"actions": [], "name": "Miles", "time": 1.0, "error": "boom",
+                                   "tools": [{"spool": loaded_spool(), "spool_id": None}]}
+    service.status["printer-2"] = {"actions": [], "name": "Other", "time": 2.0, "error": None, "tools": []}
+    printers = {p["uuid"]: p for p in make_client(service).get("/api/status").get_json()["printers"]}
+    assert printers["printer-1"]["tools"][0]["spool_id"] is None
+    assert printers["printer-1"]["error"] == "boom"
+    assert printers["printer-2"]["tools"] == []
+
+
+def test_status_has_no_tokens(tmp_path):
+    service = configured(tmp_path)
+    text = make_client(service).get("/api/status").get_data(as_text=True)
+    assert "secret-refresh" not in text
+    assert service.store.load().access_token not in text
+
+
+def test_status_before_the_first_poll(tmp_path):
+    service = make_service(tmp_path)
+    service.status["printer-1"] = {"actions": []}
+    response = make_client(service).get("/api/status")
+    assert response.status_code == 200
+    assert response.get_json()["printers"] == [
+        {"uuid": "printer-1", "name": None, "time": None, "error": None, "tools": []}
+    ]

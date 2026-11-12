@@ -192,7 +192,7 @@ def create_app(service: Service) -> Flask:
             origin = request.headers.get("Origin")
             if origin and urlparse(origin).netloc != request.host:
                 return "Blocked: the request came from another site", 403
-        if request.endpoint in ("healthz", "static", "login", "first_password", "receive_login", "receive_login_post"):
+        if request.endpoint in ("healthz", "api_status", "static", "login", "first_password", "receive_login", "receive_login_post"):
             return None
         if not auth.has_password():
             return redirect(url_for("first_password"))
@@ -248,6 +248,32 @@ def create_app(service: Service) -> Flask:
     def healthz():
         alive = service.poller_alive()
         return jsonify(status="ok" if alive else "poller stopped"), 200 if alive else 503
+
+    @app.get("/api/status")
+    def api_status():
+        """Read-only, no login: what is loaded where, for Home Assistant. Never tokens or settings."""
+        with service.lock:
+            printers = [
+                {
+                    "uuid": uuid,
+                    "name": entry.get("name"),
+                    "time": entry.get("time"),
+                    "error": entry.get("error"),
+                    "tools": [
+                        {
+                            "tool_id": tool["spool"].tool_id,
+                            "instance_uuid": tool["spool"].uuid,
+                            "spool_id": tool["spool_id"],
+                            "is_from_nfc": tool["spool"].is_from_nfc,
+                            "consumed_weight": tool["spool"].consumed_weight,
+                            "actual_weight": tool["spool"].actual_weight,
+                        }
+                        for tool in entry.get("tools") or []
+                    ],
+                }
+                for uuid, entry in service.status.items()
+            ]
+            return jsonify(auth_error=service.last_auth_error, printers=printers)
 
     @app.route("/welcome", methods=["GET", "POST"])
     def first_password():
