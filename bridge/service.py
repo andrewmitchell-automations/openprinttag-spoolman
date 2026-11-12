@@ -316,7 +316,7 @@ class Service:
                 for other in spools
                 if other["id"] != spool_id and filament_id is not None and (other.get("filament") or {}).get("id") == filament_id
             )
-            return {"loaded": loaded, "spool": spool, "shared": shared, "changes": build_link_changes(loaded, spool, shared)}
+            return {"loaded": loaded, "spool": spool, "shared": shared, "changes": build_link_changes(loaded, spool, shared, self.settings.track_usage)}
 
     def _capture(self, action) -> list[str]:
         self.spoolman.captured.clear()

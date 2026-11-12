@@ -797,6 +797,14 @@ def test_more_usage_in_spoolman_keeps_its_value_by_default(used, checked, noted)
     assert changes["spool_initial_weight"]["checked"] is True
 
 
+def test_consumed_is_unticked_when_tracking_is_off():
+    """Something else owns used_weight, so linking must not overwrite it by default."""
+    changes = {c["key"]: c for c in build_link_changes(loaded_spool(30), {**SPOOL_52, "used_weight": 0.0}, 0, track_usage=False)}
+    assert changes["spool_used_weight"]["checked"] is False
+    assert changes["spool_used_weight"]["note"]
+    assert changes["spool_initial_weight"]["checked"] is True
+
+
 def test_filament_changes_are_off_when_the_filament_is_shared():
     changes = build_link_changes(loaded_spool(), SPOOL_52, 2)
     assert all(c["checked"] is False for c in changes if c["target"] == "filament" and c["key"] != "filament_material")
