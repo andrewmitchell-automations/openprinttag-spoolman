@@ -424,11 +424,12 @@ class State:
 
 
 class Bridge:
-    def __init__(self, connect, spoolman: SpoolmanClient, state: State, auto_create: bool = False):
+    def __init__(self, connect, spoolman: SpoolmanClient, state: State, auto_create: bool = False, track_usage: bool = True):
         self.connect = connect
         self.spoolman = spoolman
         self.state = state
         self.auto_create = auto_create
+        self.track_usage = track_usage
         self.fields_ready = False
         self._warned_unlinked: set[str] = set()
         self._placed: dict[str, set[str]] = {}
@@ -526,7 +527,8 @@ class Bridge:
         if spool.get("archived"):
             log.warning("Spool %s is archived in Spoolman but loaded in the printer", spool["id"])
         self._sync_location(loaded, spool, location, placed)
-        self._sync_consumption(loaded, spool)
+        if self.track_usage:
+            self._sync_consumption(loaded, spool)
         return spool["id"]
 
     @staticmethod
