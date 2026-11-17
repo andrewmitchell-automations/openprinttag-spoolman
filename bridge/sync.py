@@ -530,8 +530,7 @@ class Bridge:
         if spool.get("archived"):
             log.warning("Spool %s is archived in Spoolman but loaded in the printer", spool["id"])
         self._sync_location(loaded, spool, location, placed)
-        if self.track_usage:
-            self._sync_consumption(loaded, spool)
+        self._sync_consumption(loaded, spool)
         return spool["id"]
 
     @staticmethod
@@ -584,6 +583,9 @@ class Bridge:
             log.info("First sighting of instance %s; baseline %s g, nothing deducted", loaded.uuid, current)
         elif action == "rebase":
             log.warning("Consumed weight for instance %s went from %s g to %s g; rebasing", loaded.uuid, previous, current)
+        elif action == "use" and not self.track_usage:
+            # Something else deducts. Keep the marker current, so turning tracking on later does not deduct these grams again.
+            log.info("Instance %s consumed %s g more; tracking is off, so only the marker moves", loaded.uuid, round(delta, 3))
         elif action == "use":
             log.info("Instance %s consumed %s g more", loaded.uuid, round(delta, 3))
         elif stored_consumed(spool) is None and not self.spoolman.dry_run:
@@ -591,7 +593,7 @@ class Bridge:
             action = "baseline"
         else:
             return
-        if action == "use":
+        if action == "use" and self.track_usage:
             self._deduct(spool_id, delta, current)
         else:
             self.spoolman.update_spool(spool_id, {"extra": {**(spool.get("extra") or {}), CONSUMED_FIELD: encode_consumed(current)}})
