@@ -67,7 +67,7 @@ class Service:
             self.bridge = None
             self.warehouse_due = 0.0
             if self.spoolman and self.connect:
-                state = State(self.settings.state_path, self.settings.dry_run)
+                state = State(self.settings.state_path, self.settings.dry_run, self.settings.connect_source)
                 self.bridge = Bridge(self.connect, self.spoolman, state, self.settings.auto_create)
         self.wake.set()
 

@@ -109,7 +109,7 @@ What changes compared to connect.prusa3d.com:
 - **Spools come from Materials:** the Warehouse page lists the spools in Materials, and a spool's consumption is its full weight minus what Materials says is left.
 - **Spools without a tag work too:** a spool you put on a tool in Materials gets its own ID there, and Materials counts its use from the printer's odometer. Link it to a Spoolman spool once, and the bridge deducts its use like any other. It is never created automatically, because it was not read from a tag.
 - **Same tags, same IDs:** a tagged spool has the tag's UUID in both, so a link made while using connect.prusa3d.com keeps working after you move the printer.
-- **Switching:** a printer reports to one Connect at a time. Switching the bridge between connect.prusa3d.com and your own server forgets the chosen printers, so you choose them again.
+- **Switching:** a printer reports to one Connect at a time. Switching the bridge between connect.prusa3d.com and your own server forgets the chosen printers, so you choose them again. Each spool also starts counting again from what the new source reports the first time it sees it, because the two count used grams from different starting points. Nothing is deducted for that difference, and what was printed between the last read of the old source and the first read of the new one is not deducted either.
 - **Beta:** the self-hosted server is in public beta, and its API can change between releases.
 
 ## Configuration
