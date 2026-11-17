@@ -177,20 +177,45 @@ def test_first_sighting_of_existing_spool_only_sets_baseline(respx_mock, tmp_pat
 
 
 @respx.mock(assert_all_called=False)
-def test_no_consumption_is_written_when_tracking_is_off(respx_mock, tmp_path):
+def test_tracking_off_moves_only_the_marker(respx_mock, tmp_path):
+    """Something else deducts, so used_weight is never written, but the marker follows Connect."""
     mock_fields(respx_mock)
-    patch = mock_deduction(respx_mock, existing_spool(extra=linked_extra(10)))
+    patch = mock_deduction(respx_mock, existing_spool(extra=linked_extra(10, card_uids=json.dumps("ABC"))))
     make_bridge(tmp_path, printer(consumed=12.5), track_usage=False).poll()
-    assert patch.call_count == 0
-    assert writes(respx_mock) == []
+    assert patch.call_count == 1
+    body = json.loads(patch.calls[0].request.content)
+    assert body == {"extra": linked_extra(12.5, card_uids=json.dumps("ABC"))}
 
 
 @respx.mock(assert_all_called=False)
-def test_no_baseline_is_written_when_tracking_is_off(respx_mock, tmp_path):
+def test_tracking_off_baseline_writes_no_used_weight(respx_mock, tmp_path):
     mock_fields(respx_mock)
     patch = mock_deduction(respx_mock, existing_spool(extra=linked_extra()))
     make_bridge(tmp_path, printer(consumed=100), track_usage=False).poll()
-    assert patch.call_count == 0
+    assert all("used_weight" not in json.loads(c.request.content) for c in patch.calls)
+
+
+@respx.mock(assert_all_called=False)
+def test_turning_tracking_on_deducts_only_new_usage(respx_mock, tmp_path):
+    """Marker at 10 g, 50 g used while off, then on: nothing is deducted twice, and later usage is."""
+    mock_fields(respx_mock)
+    spool = existing_spool(extra=linked_extra(10))
+
+    def update(request):
+        body = json.loads(request.content)
+        spool.update(body)
+        return httpx.Response(200, json=spool)
+
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool").mock(side_effect=lambda r: httpx.Response(200, json=[spool]))
+    respx_mock.get(f"{SPOOLMAN}/api/v1/spool/42").mock(side_effect=lambda r: httpx.Response(200, json=spool))
+    respx_mock.patch(f"{SPOOLMAN}/api/v1/spool/42").mock(side_effect=update)
+
+    make_bridge(tmp_path, printer(consumed=60), track_usage=False).poll()
+    assert spool["used_weight"] == 100.0
+    make_bridge(tmp_path, printer(consumed=60)).poll()
+    assert spool["used_weight"] == 100.0
+    make_bridge(tmp_path, printer(consumed=65)).poll()
+    assert spool["used_weight"] == 105.0
 
 
 def mock_deduction(mock, spool):

@@ -112,7 +112,7 @@ Everything can be set in the browser and is saved in `data/config.json`. Environ
 | `WAREHOUSE_INTERVAL` | `600` | Seconds between reading the Connect warehouse |
 | `DRY_RUN` | `true` | Dry-run mode |
 | `AUTO_CREATE` | `false` | Create unknown spools without asking |
-| `TRACK_USAGE` | `true` | Deduct what the printer consumes in Spoolman. Turn off to only link spools and set their location |
+| `TRACK_USAGE` | `true` | Deduct what the printer consumes in Spoolman. Turn off to only link spools and set their location. While it is off, the bridge still moves its consumption marker, so turning it back on deducts only new usage |
 
 ## Security
 
