@@ -133,6 +133,7 @@ class LocalConnectClient:
         if http is None:
             http = httpx.Client(timeout=30, headers={"User-Agent": USER_AGENT}, verify=local_tls_verify(settings))
         self.http = http
+        self._add_problems: dict[tuple[str, str], str] = {}
 
     @property
     def base(self) -> str:
@@ -234,28 +235,45 @@ class LocalConnectClient:
         already carries answers that spool. A failure leaves the tool empty for this poll.
         """
         tool_id = row.get("tool_id")
+        tool_key = (printer_uuid, str(tool_id))
         url = f"{self.base}/printers/{printer_uuid}/tools/{tool_id}/spool"
         try:
             response = self.http.post(url, headers={"Authorization": f"Bearer {self.settings.local_connect_token}"})
         except httpx.HTTPError as e:
-            log.warning("Could not add the tagged spool on tool %s to Materials: %s", tool_id, type(e).__name__)
+            self._add_failed(tool_key, f"Could not add the tagged spool on tool {tool_id} to Materials: {type(e).__name__}")
+            return
+        if response.status_code in (401, 403):
+            self._add_failed(
+                tool_key,
+                f"The API credential may not add the tagged spool on tool {tool_id} to Materials ({_problem(response)}). "
+                "That takes a credential with the operate scope. With read, click Add to Materials in the server yourself",
+            )
             return
         if response.status_code not in (200, 201):
-            log.warning("Materials refused to add the tagged spool on tool %s: %s", tool_id, _problem(response))
+            self._add_failed(tool_key, f"Materials refused to add the tagged spool on tool {tool_id}: {_problem(response)}")
             return
         try:
             added = response.json()
         except ValueError:
-            log.warning("Materials answered the spool add on tool %s without JSON", tool_id)
+            self._add_failed(tool_key, f"Materials answered the spool add on tool {tool_id} without JSON")
             return
         if not isinstance(added, dict) or not added.get("uuid"):
-            log.warning("Materials answered the spool add on tool %s with no spool", tool_id)
+            self._add_failed(tool_key, f"Materials answered the spool add on tool {tool_id} with no spool")
             return
+        self._add_problems.pop(tool_key, None)
         log.info("Added the tagged spool %s on tool %s to Materials", added["uuid"], tool_id)
         row.update(spool_id=added.get("id"), spool_uuid=added["uuid"])
         for key in ("remaining_weight_g", "full_weight_g"):
             if row.get(key) is None and added.get(key) is not None:
                 row[key] = added[key]
+
+    def _add_failed(self, key: tuple[str, str], message: str) -> None:
+        """Warns once per tool and problem. The add is retried every poll, so repeats go to the debug log."""
+        if self._add_problems.get(key) == message:
+            log.debug(message)
+            return
+        self._add_problems[key] = message
+        log.warning(message)
 
     def warehouse_items(self, organization_id: str) -> list[dict]:
         return [warehouse_item(spool) for spool in self._pages("/spools", "spools") if spool.get("uuid")]
