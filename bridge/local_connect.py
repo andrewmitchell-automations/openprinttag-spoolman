@@ -208,6 +208,9 @@ class LocalConnectClient:
         if printer is None:
             raise ConnectError(f"Printer query failed: the self-hosted Connect does not list {printer_uuid}")
         rows = [row for row in self._pages("/printers/tools", "tools") if row.get("device_id") == printer_uuid]
+        for row in rows:
+            if row.get("from_nfc") and not row.get("spool_uuid"):
+                self._add_tagged_spool(printer_uuid, row)
         spools: dict[int, dict] = {}
         for material_uuid in {row.get("material_uuid") for row in rows if row.get("spool_id") is not None}:
             spools.update(self._spools_of(material_uuid))
@@ -222,6 +225,37 @@ class LocalConnectClient:
             "state": printer.get("state") or None,
             "fff": {"tools": tools},
         }
+
+    def _add_tagged_spool(self, printer_uuid: str, row: dict) -> None:
+        """Puts the spool a tool read off its NFC tag into Materials' stock, so the tool names it.
+
+        Materials links a tag to a tool only after "Add to Materials". Without that a newly
+        loaded tagged spool reads as no spool at all. The call is idempotent: a tag a spool
+        already carries answers that spool. A failure leaves the tool empty for this poll.
+        """
+        tool_id = row.get("tool_id")
+        url = f"{self.base}/printers/{printer_uuid}/tools/{tool_id}/spool"
+        try:
+            response = self.http.post(url, headers={"Authorization": f"Bearer {self.settings.local_connect_token}"})
+        except httpx.HTTPError as e:
+            log.warning("Could not add the tagged spool on tool %s to Materials: %s", tool_id, type(e).__name__)
+            return
+        if response.status_code not in (200, 201):
+            log.warning("Materials refused to add the tagged spool on tool %s: %s", tool_id, _problem(response))
+            return
+        try:
+            added = response.json()
+        except ValueError:
+            log.warning("Materials answered the spool add on tool %s without JSON", tool_id)
+            return
+        if not isinstance(added, dict) or not added.get("uuid"):
+            log.warning("Materials answered the spool add on tool %s with no spool", tool_id)
+            return
+        log.info("Added the tagged spool %s on tool %s to Materials", added["uuid"], tool_id)
+        row.update(spool_id=added.get("id"), spool_uuid=added["uuid"])
+        for key in ("remaining_weight_g", "full_weight_g"):
+            if row.get(key) is None and added.get(key) is not None:
+                row[key] = added[key]
 
     def warehouse_items(self, organization_id: str) -> list[dict]:
         return [warehouse_item(spool) for spool in self._pages("/spools", "spools") if spool.get("uuid")]
