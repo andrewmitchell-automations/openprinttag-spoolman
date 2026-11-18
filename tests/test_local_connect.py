@@ -99,10 +99,35 @@ def test_a_spool_without_a_tag_is_reported_with_its_own_uuid(respx_mock, tmp_pat
 
 @respx.mock(assert_all_called=False)
 def test_tools_without_a_spool_and_other_printers_are_left_out(respx_mock, tmp_path):
-    mock_local(respx_mock, [tool_row(spool_id=None), tool_row(tool_id="1", device="dev-2")], [])
+    mock_local(respx_mock, [tool_row(spool_id=None, from_nfc=False), tool_row(tool_id="1", device="dev-2")], [])
     printer = LocalConnectClient(local_settings(tmp_path), httpx.Client()).fetch_printer("local", "dev-1")
     assert len(printer["fff"]["tools"]) == 1
     assert parse_loaded_spools(printer) == []
+
+
+@respx.mock(assert_all_called=False)
+def test_a_tagged_spool_not_yet_in_materials_is_added_and_read(respx_mock, tmp_path):
+    mock_local(respx_mock, [tool_row(spool_id=None)], [spool()])
+    add = respx_mock.post(f"{BASE}/printers/dev-1/tools/0/spool").respond(json=spool())
+    [loaded] = parse_loaded_spools(LocalConnectClient(local_settings(tmp_path), httpx.Client()).fetch_printer("local", "dev-1"))
+    assert add.called and add.calls[0].request.headers["Authorization"] == f"Bearer {TOKEN}"
+    assert loaded.uuid == UUID and loaded.is_from_nfc and loaded.consumed_weight == 120.0
+
+
+@respx.mock(assert_all_called=False)
+def test_a_refused_spool_add_leaves_the_tool_empty(respx_mock, tmp_path):
+    mock_local(respx_mock, [tool_row(spool_id=None)], [])
+    respx_mock.post(f"{BASE}/printers/dev-1/tools/0/spool").respond(409, json={"code": "materials/NOT_REPORTED", "title": "No tag"})
+    printer = LocalConnectClient(local_settings(tmp_path), httpx.Client()).fetch_printer("local", "dev-1")
+    assert parse_loaded_spools(printer) == []
+
+
+@respx.mock(assert_all_called=False)
+def test_a_spool_already_in_materials_is_not_added_again(respx_mock, tmp_path):
+    mock_local(respx_mock, [tool_row()], [spool()])
+    add = respx_mock.post(f"{BASE}/printers/dev-1/tools/0/spool").respond(json=spool())
+    LocalConnectClient(local_settings(tmp_path), httpx.Client()).fetch_printer("local", "dev-1")
+    assert not add.called
 
 
 @respx.mock(assert_all_called=False)
